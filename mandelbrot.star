@@ -8,13 +8,15 @@ FRAME_DURATION_MS = 100
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
 MIN_ITER = 20
 ZOOM_TO_ITER = 0.5
+BLACK_COLOR = "#000000"
+ESCAPE_THRESHOLD = 4.0
 
 def main(config):
-    random.seed(int(time.now().unix / 15))
+    random.seed(0)
     frames = get_animation_frames()
 
     # Return the animation with all frames
-    return render.Root(        
+    return render.Root(
         delay = FRAME_DURATION_MS,
         child = render.Box(render.Animation(frames)),
     )
@@ -28,142 +30,133 @@ def get_animation_frames():
 
     # List to store frames of the animation
     frames = list()
-    
+
     # Generate multiple frames for animation
     for frame_num in range(MAX_FRAMES):
         frame = draw_mandelbrot_at(zoom_center_x, zoom_center_y, zoom_level)
         zoom_level *= ZOOM_GROWTH
         frames.append(frame)
-    
+
     return frames
 
 def find_point_of_interest():
-    (x,y,zoom) = (0, 0, 1)    
+    (x, y, zoom) = (0, 0, 1)
     for _ in range(MAX_FRAMES):
-        (x,y) = find_interesting_point_near(x,y,zoom)
+        (x, y) = find_interesting_point_near(x, y, zoom)
         zoom *= ZOOM_GROWTH
-    return (x,y)
+    return (x, y)
 
 def find_interesting_point_near(x, y, zoom_level):
     step = 1 / zoom_level
-    (bestx, besty, bestesc) = (x, y, escape_proximity(x,y))
+    (bestx, besty, bestesc) = (x, y, get_escape_proximity(x, y, 100))
 
-    for _ in range(MAX_INTEREST_POINTS):  # Check random points
+    for i in range(MAX_INTEREST_POINTS):  # Check random points
         # Pick random point in range of current frame display
         dx = (random.number(0, 128) - 64) / 32 * step  # Larger range for x
-        dy = (random.number(0, 64) - 32) / 32 * step   # Half range for y
+        dy = (random.number(0, 64) - 32) / 32 * step  # Half range for y
         a = x + dx
         b = y + dy
 
         # Check if the point has higher non-escaping distance
-        escape_distance = escape_proximity(a, b)
-        if escape_distance < 4 and escape_distance > bestesc:
+        escape_distance = get_escape_proximity(a, b, 20 + i*2)
+        if escape_distance < ESCAPE_THRESHOLD and escape_distance > bestesc:
             (bestx, besty, bestesc) = (a, b, escape_distance)
 
     return (bestx, besty)
-
-def escape_proximity(a, b):
-    zr = 0
-    zi = 0
-    cr = a
-    ci = b
-    max_iter = 50
-    escape_distance = 0  # Track how far it goes in the iterations
-
-    for i in range(max_iter):
-        zr_next = zr * zr - zi * zi + cr
-        zi_next = 2 * zr * zi + ci
-        zr = zr_next
-        zi = zi_next
-        escape_distance = zr * zr + zi * zi
-
-        if escape_distance > 4:  # The point has escaped
-            return escape_distance
-
-    # Instead of returning 0, return the distance even if it didn't escape
-    return escape_distance
 
 # Interpolation function between two points
 def interpolate(start, end, t):
     return start + t * (end - start)
 
-
 # Function to draw Mandelbrot at a specific center and zoom level
 def draw_mandelbrot_at(center_x, center_y, zoom_level):
     rows = list()
-    iterations = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
+    iter = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
 
     # Loop through each pixel in the display (32 rows by 64 columns)
     for y in range(32):
         row = list()
+        next_color = ""
+        run_length = 0
+
+        # Calculate the bounds for zooming
+        zoom_xmin = center_x - (1.5 / zoom_level)
+        zoom_xmax = center_x + (1.5 / zoom_level)
+        zoom_ymin = center_y - (1.0 / zoom_level)
+        zoom_ymax = center_y + (1.0 / zoom_level)
+
         for x in range(64):
-            # Calculate the bounds for zooming
-            zoom_xmin = center_x - (1.5 / zoom_level)
-            zoom_xmax = center_x + (1.5 / zoom_level)
-            zoom_ymin = center_y - (1.0 / zoom_level)
-            zoom_ymax = center_y + (1.0 / zoom_level)
-            
             # Map the pixel to a zoomed-in complex number
             a = map_range(x, 0, 64, zoom_xmin, zoom_xmax)
             b = map_range(y, 0, 32, zoom_ymin, zoom_ymax)
-            
-            # Compute the color at this point
-            color = mandelbrot(a, b, iterations)
 
-            # Add a 1x1 box with the appropriate color to the row
-            row.append(
-                render.Box(
-                    width=1,
-                    height=1,
-                    color=color
-                )
-            )
-        
+            # Compute the color at this point
+            color = get_mandelbrot_color(a, b, iter)
+
+            # Add a 1x1 box with the appropriate color to the row        
+            if next_color == "": # First color of row
+                run_length = 1
+                next_color = color
+            elif color == next_color: # Color run detected
+                run_length += 1
+            else: # Color change
+                row.append(render.Box(width=run_length, height=1, color=next_color))
+                run_length = 1
+                next_color = color
+
+        # Add last box
+        row.append(render.Box(width=run_length, height=1, color=next_color))
+
         # Add the row to the grid
-        rows.append(
-            render.Row(children=row)
-        )
+        rows.append(render.Row(children = row))
 
     return render.Column(
-        children=rows
+        children = rows,
     )
 
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
     return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
 
-# Mandelbrot function that returns a color based on escape time
-def mandelbrot(a, b, iterations):
+def mandelbrot_calc(a, b, max_iter):
     # Initialize z = 0 + 0i
-    zr = 0
-    zi = 0
-    cr = a
-    ci = b
+    zr, zi, cr, ci = 0, 0, a, b
 
-    for i in range(iterations):
+    dist = 0
+    for i in range(1, max_iter + 1):
         # Perform z = z^2 + c
         zr_next = zr * zr - zi * zi + cr
         zi_next = 2 * zr * zi + ci
-        zr = zr_next
-        zi = zi_next
+        zr, zi = zr_next, zi_next
 
-        # Check if the squared magnitude exceeds 2
-        if zr * zr + zi * zi > 4:
-            return get_color(i, iterations)  # Escaped, return color
+        # Check if the point has escaped
+        dist = zr * zr + zi * zi
+        if dist > ESCAPE_THRESHOLD:
+            break
 
-    return '#000000'  # Did not escape (black for Mandelbrot set)
+    return i, dist
+
+# Escape proximity calculation
+def get_escape_proximity(a, b, max_iter):
+    _, escape_distance = mandelbrot_calc(a, b, max_iter)
+    return escape_distance
+
+# Mandelbrot function that returns a color based on escape time
+def get_mandelbrot_color(a, b, max_iter):
+    iter, _ = mandelbrot_calc(a, b, max_iter)
+    return get_color(iter, max_iter)
 
 def get_color(iteration, max_iter):
     if iteration == max_iter:
-        return '#000000'  # Black for points inside the set
-    
+        return BLACK_COLOR  # Black for points inside the set
+
     # Normalize the iteration count to the range [0, 1]
     t = iteration / max_iter
 
     # Use a hue-based color scheme for more variety
     hue = int(360 * t)  # Map t to a hue in degrees (0 to 360)
-    saturation = 1.0    # Full saturation
-    lightness = 0.5 #0.5 + 0.5 * t  # Lightness increases with t for brightness
+    saturation = 1.0  # Full saturation
+    lightness = 0.5  #0.5 + 0.5 * t  # Lightness increases with t for brightness
 
     return hsl_to_hex(hue, saturation, lightness)
 
@@ -200,10 +193,10 @@ def pow(base, exp):
         return 1
     elif exp < 0:
         return 1 / pow(base, -exp)  # Handle negative exponents
-    
+
     result = 1.0
     integer_part = int(exp)
-    
+
     # Compute the integer part of the exponentiation
     for _ in range(integer_part):
         result *= base
@@ -225,10 +218,10 @@ def int_to_hex(n):
 
 # Convert RGB values to a hexadecimal color code
 def rgb_to_hex(r, g, b):
-    return '#' + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
+    return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
+    hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
