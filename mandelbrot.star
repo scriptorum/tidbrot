@@ -1,6 +1,7 @@
-load("render.star", "render")
 load("random.star", "random")
+load("render.star", "render")
 load("time.star", "time")
+load("math.star", "math")
 
 ZOOM_GROWTH = 1.04
 MAX_INTEREST_POINTS = 40
@@ -12,9 +13,10 @@ BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 
 def main(config):
-    random.seed(time.now().unix)
+    #random.seed(time.now().unix)
     #random.seed(0)
     frames = get_animation_frames()
+
 
     # Return the animation with all frames
     return render.Root(
@@ -33,7 +35,7 @@ def get_animation_frames():
     frames = list()
 
     # Generate multiple frames for animation
-    for frame_num in range(MAX_FRAMES):
+    for _ in range(MAX_FRAMES):
         frame = draw_mandelbrot_at(zoom_center_x, zoom_center_y, zoom_level)
         zoom_level *= ZOOM_GROWTH
         frames.append(frame)
@@ -64,10 +66,6 @@ def find_interesting_point_near(x, y, zoom_level):
             (best_x, best_y, best_escape) = (a, b, escape_distance)
 
     return (best_x, best_y)
-
-# Interpolation function between two points
-def interpolate(start, end, t):
-    return start + t * (end - start)
 
 # Function to draw Mandelbrot at a specific center and zoom level
 def draw_mandelbrot_at(center_x, center_y, zoom_level):
@@ -119,6 +117,17 @@ def draw_mandelbrot_at(center_x, center_y, zoom_level):
 def map_range(v, min1, max1, min2, max2):
     return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
 
+# Escape proximity calculation
+def get_escape_proximity(a, b, max_iter):
+    _, escape_distance = mandelbrot_calc(a, b, max_iter)
+    return escape_distance
+
+# Mandelbrot function that returns a color based on escape time
+def get_mandelbrot_color(a, b, max_iter):
+    iter, _ = mandelbrot_calc(a, b, max_iter)
+    return get_color(iter, max_iter)
+
+
 def mandelbrot_calc(a, b, max_iter):
     # Initialize z = 0 + 0i
     zr, zi, cr, ci = 0, 0, a, b
@@ -133,84 +142,23 @@ def mandelbrot_calc(a, b, max_iter):
         # Check if the point has escaped
         dist = zr * zr + zi * zi
         if dist > ESCAPE_THRESHOLD:
-            break
+            return i, dist
 
-    return i, dist
-
-# Escape proximity calculation
-def get_escape_proximity(a, b, max_iter):
-    _, escape_distance = mandelbrot_calc(a, b, max_iter)
-    return escape_distance
-
-# Mandelbrot function that returns a color based on escape time
-def get_mandelbrot_color(a, b, max_iter):
-    iter, _ = mandelbrot_calc(a, b, max_iter)
-    return get_color(iter, max_iter)
+    return max_iter, dist  # If it doesn't escape, return max_iter (black)
 
 def get_color(iteration, max_iter):
     if iteration == max_iter:
         return BLACK_COLOR  # Black for points inside the set
 
     # Normalize the iteration count to the range [0, 1]
-    t = iteration % 50 / 50
+    t = iteration / max_iter  # Don't reset at 50; let it vary smoothly
 
     # Use a hue-based color scheme for more variety
     hue = int(360 * t)  # Map t to a hue in degrees (0 to 360)
-    saturation = 0.5 + 0.5 * t
-    lightness = 0.5
+    saturation = 0.5 + 0.3 * (t % 1)  # Gradually change saturation for smoothness
+    lightness = 0.5 + 0.2 * (t % 1)  # Gradually vary lightness to avoid harsh transitions
 
     return hsl_to_hex(hue, saturation, lightness)
-
-# Interpolate from current color to the target gradient
-def interpolate_color_to_gradient(current_color, target_gradient, t, ratio):
-    # Get the two colors from the gradient based on iteration
-    num_colors = len(target_gradient) - 1
-    scaled_t = t * num_colors
-    color_index = int(scaled_t)
-    color_t = scaled_t - color_index
-
-    # Get the current and next target colors from the gradient
-    target_color1 = hex_to_rgb(target_gradient[color_index])
-    target_color2 = hex_to_rgb(target_gradient[color_index + 1])
-
-    # Interpolate between the two target colors in the gradient
-    target_color = interpolate_colors(target_color1, target_color2, color_t)
-
-    # Interpolate 20% between the current color and the target color
-    current_rgb = hex_to_rgb(current_color)
-    final_color = interpolate_colors(current_rgb, target_color, ratio)
-
-    return rgb_to_hex(final_color[0], final_color[1], final_color[2])
-
-# Function to interpolate between two colors
-def interpolate_colors(color1, color2, t):
-    r = int((1 - t) * color1[0] + t * color2[0])
-    g = int((1 - t) * color1[1] + t * color2[1])
-    b = int((1 - t) * color1[2] + t * color2[2])
-    return (r, g, b)
-
-def pow(base, exp):
-    if exp == 0:
-        return 1
-    elif exp < 0:
-        return 1 / pow(base, -exp)  # Handle negative exponents
-
-    result = 1.0
-    integer_part = int(exp)
-
-    # Compute the integer part of the exponentiation
-    for _ in range(integer_part):
-        result *= base
-
-    # If there is a fractional part, approximate it using a series expansion
-    fractional_part = exp - integer_part
-    if fractional_part > 0:
-        # Approximate the fractional exponent (using a simple method)
-        # Use a basic approximation for sqrt (like 0.5 exponent):
-        approx_fraction = 1 + fractional_part * (base - 1)
-        result *= approx_fraction
-
-    return result
 
 # Helper function to convert an integer to two-digit hexadecimal value
 def int_to_hex(n):
@@ -220,13 +168,6 @@ def int_to_hex(n):
 # Convert RGB values to a hexadecimal color code
 def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
-
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return (r, g, b)
 
 def hsl_to_hex(h, s, l):
     c = (1 - abs(2 * l - 1)) * s
