@@ -2,9 +2,9 @@ load("render.star", "render")
 load("random.star", "random")
 load("time.star", "time")
 
-ZOOM_GROWTH = 1.05
+ZOOM_GROWTH = 1.04
 MAX_INTEREST_POINTS = 40
-FRAME_DURATION_MS = 100
+FRAME_DURATION_MS = 80
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
 MIN_ITER = 20
 ZOOM_TO_ITER = 0.5
@@ -12,7 +12,8 @@ BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 
 def main(config):
-    random.seed(0)
+    random.seed(time.now().unix)
+    #random.seed(0)
     frames = get_animation_frames()
 
     # Return the animation with all frames
@@ -48,7 +49,7 @@ def find_point_of_interest():
 
 def find_interesting_point_near(x, y, zoom_level):
     step = 1 / zoom_level
-    (bestx, besty, bestesc) = (x, y, get_escape_proximity(x, y, 100))
+    (best_x, best_y, best_escape) = (x, y, get_escape_proximity(x, y, 100))
 
     for i in range(MAX_INTEREST_POINTS):  # Check random points
         # Pick random point in range of current frame display
@@ -58,11 +59,11 @@ def find_interesting_point_near(x, y, zoom_level):
         b = y + dy
 
         # Check if the point has higher non-escaping distance
-        escape_distance = get_escape_proximity(a, b, 20 + i*2)
-        if escape_distance < ESCAPE_THRESHOLD and escape_distance > bestesc:
-            (bestx, besty, bestesc) = (a, b, escape_distance)
+        escape_distance = get_escape_proximity(a, b, 20 + i * 2)
+        if escape_distance < ESCAPE_THRESHOLD and escape_distance > best_escape:
+            (best_x, best_y, best_escape) = (a, b, escape_distance)
 
-    return (bestx, besty)
+    return (best_x, best_y)
 
 # Interpolation function between two points
 def interpolate(start, end, t):
@@ -151,12 +152,12 @@ def get_color(iteration, max_iter):
         return BLACK_COLOR  # Black for points inside the set
 
     # Normalize the iteration count to the range [0, 1]
-    t = iteration / max_iter
+    t = iteration % 50 / 50
 
     # Use a hue-based color scheme for more variety
     hue = int(360 * t)  # Map t to a hue in degrees (0 to 360)
-    saturation = 1.0  # Full saturation
-    lightness = 0.5  #0.5 + 0.5 * t  # Lightness increases with t for brightness
+    saturation = 0.5 + 0.5 * t
+    lightness = 0.5
 
     return hsl_to_hex(hue, saturation, lightness)
 
