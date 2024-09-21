@@ -1,18 +1,24 @@
 #
 # TODO
-# Find POV still not great, it seems to always pick close to the center line
-# Expose some optimization controls 
+# - Expose some optimization controls 
+# - Adjust neighboring iterations based on sample escape times:
+#   - if a point escapes quickly, reduce the iterations)
+# - Bounding box optimizaitons:
+#   - sample 4 points
+#   - if iteration count is very close, assume entire rectangle escapes at that iteration
+#   - if not, subdivide with more points
+#   - force horizontal subdivision of first four points, to avoid mandelbrot symmetry causing false fill
 # 
 load("random.star", "random")
 load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.05
-FRAME_DURATION_MS = 100
+ZOOM_GROWTH = 1.02
+FRAME_DURATION_MS = 80
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 20
-ZOOM_TO_ITER = 0.2
+MIN_ITER = 200
+ZOOM_TO_ITER = 1.1
 BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 MAX_INT = int(math.pow(2, 53))
@@ -22,7 +28,8 @@ POI_ACROSS = 20
 POI_DOWN = 10
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
-NUM_GRADIENT_STEPS = 12
+NUM_GRADIENT_STEPS = 6
+MIN_ESCAPE_DIFFERENCE = 5
 
 def main(config):
     random.seed(time.now().unix)
@@ -49,7 +56,7 @@ def get_animation_frames():
     print("Generating frames")
     for frame in range(MAX_FRAMES):
         print("Generating frame #" + str(frame))
-        frame = draw_mandelbrot_at(float(x), float(y), zoom_level, gradient)
+        frame = draw_mandelbrot(gradient, zoom_level)
         frames.append(frame)
         zoom_level *= ZOOM_GROWTH
         x, y = (x * 0.9 + tx * 0.1), (y * 0.9 + ty * 0.1)
@@ -108,58 +115,6 @@ def get_escape_proximity(a, b, iter_limit):
     _, escape_distance = mandelbrot_calc(a, b, iter_limit)
     return escape_distance
 
-# Function to draw Mandelbrot at a specific center and zoom level
-def draw_mandelbrot_at(center_x, center_y, zoom_level, gradient):
-    rows = list()
-    iter_limit = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
-    
-    # Loop through each pixel in the display (64x32)
-    for y in range(32):
-        row = list()
-        next_color = ""
-        run_length = 0
-
-        # Calculate the bounds for zooming
-        zoom_xmin = center_x - (1.5 / zoom_level)
-        zoom_xmax = center_x + (1.5 / zoom_level)
-        zoom_ymin = center_y - (1.0 / zoom_level)
-        zoom_ymax = center_y + (1.0 / zoom_level)
-
-        for x in range(64):
-            # Map the pixel to a zoomed-in complex number
-            a = map_range(x, 0, 64, zoom_xmin, zoom_xmax)
-            b = map_range(y, 0, 32, zoom_ymin, zoom_ymax)
-
-            # Compute the color at this point
-            color = get_mandelbrot_color(a, b, iter_limit, gradient)
-
-            # Add a 1x1 box with the appropriate color to the row        
-            if next_color == "": # First color of row
-                run_length = 1
-                next_color = color
-            elif color == next_color: # Color run detected
-                run_length += 1
-            else: # Color change
-                if run_length == 1 and next_color == BLACK_COLOR:
-                    row.append(BLACK_PIXEL)
-                else:
-                    row.append(render.Box(width=run_length, height=1, color=next_color))
-                run_length = 1
-                next_color = color
-
-        # Add last box
-        if run_length == 1 and next_color == BLACK_COLOR:
-            row.append(BLACK_PIXEL)
-        else:
-            row.append(render.Box(width=run_length, height=1, color=next_color))
-
-        # Add the row to the grid
-        rows.append(render.Row(children = row))
-
-    return render.Column(
-        children = rows,
-    )
-
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
     return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
@@ -184,17 +139,6 @@ def mandelbrot_calc(a, b, iter_limit):
 
     return iter_limit, dist
 
-def get_mandelbrot_color(a, b, iter_limit, gradient):
-    iter, _ = mandelbrot_calc(a, b, iter_limit)
-
-    if iter == iter_limit:
-        return BLACK_COLOR
-    
-    color = get_gradient_color(iter, gradient)
-
-    return color
-
-
 def int_to_hex(n):
     if n > 255:
         fail("Can't convert value " + str(n) + " to hex digit")
@@ -206,6 +150,9 @@ def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def get_gradient_color(iter, gradient):
+    if iter > MAX_ITER:
+        return BLACK_COLOR
+
     # Normalize iteration count between 0 and 1
     t = iter / MAX_ITER % 1.0
 
@@ -276,3 +223,137 @@ def hsl_to_hex(h, s, l):
     r = int((r + m) * 255)
     g = int((g + m) * 255)
     b = int((b + m) * 255)
+
+def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, iterations, gradient):
+    dxp, dyp  = int(xp2 - xp1), int(yp2 - yp1) # Difference between pixel numbers
+    dxm, dym = xm2 - xm1 / float(dxp), xm2 - xm1 / float(dxp) # Range of mb set area
+
+    # check four corners
+    esc1 = determine_pixel_escape(xp1, yp1, xm1, ym1, map, iterations, gradient)
+    esc2 = determine_pixel_escape(xp1, yp2, xm1, ym2, map, iterations, gradient)
+    esc3 = determine_pixel_escape(xp2, yp2, xm2, ym2, map, iterations, gradient)
+    esc4 = determine_pixel_escape(xp2, yp1, xm2, ym1, map, iterations, gradient)
+
+    # if iteration count is very close, assume entire rectangle escapes at that iteration
+    if escape_similar([esc1, esc2, esc3, esc4]):
+        for y in range(yp1, yp2 + 1):
+            for x in range(xp1, xp2 + 1):
+                set_pixel(x, y, map, get_gradient_color(esc1, gradient))
+
+    # if not, subdivide with more points
+    else:
+        # Subdivide on x
+        if dxp > 2 and dxp >= dyp:
+            halfxp = dxp / 2
+            splitxp = int(halfxp) + xp1
+            splitxm1 = dxm * halfxp + xm1
+            splitxm2 = dxm * (dxp - halfxp) + xm1
+            render_mandelbrot_area(xp1, yp1, splitxp, yp2, xm1, ym1, splitxm1, ym2, map, iterations, gradient)
+            render_mandelbrot_area(splitxp+1, yp1, xp2, yp2, splitxm2, ym1, xm2, ym2, map, iterations, gradient)
+
+        # Subdivide on y
+        elif dyp > 2 and dyp >= dxp:
+            halfyp = dyp / 2
+            splityp = int(halfyp) + yp1
+            splitym1 = dym * halfyp + ym1
+            splitym2 = dym * (dyp - halfyp) + ym1
+            render_mandelbrot_area(xp1, yp1, xp2, splityp, xm1, ym1, xm2, splitym1, map, iterations, gradient)
+            render_mandelbrot_area(xp1, splityp+1, xp2, yp2, xm1, splitym2, xm2, ym2, map, iterations, gradient)
+
+        # No more subdivision
+        else:
+            set_pixel(xp1, yp1, map, get_gradient_color(esc1, gradient))
+            set_pixel(xp1, yp2, map, get_gradient_color(esc2, gradient))
+            set_pixel(xp2, yp2, map, get_gradient_color(esc3, gradient))
+            set_pixel(xp2, yp1, map, get_gradient_color(esc4, gradient))
+    
+    # All done
+    return map
+
+def escape_similar(escapes):
+    size = len(escapes)
+    if size > 1:
+        for i in range(1, size):
+            if abs(escapes[0] - escapes[i]) > MIN_ESCAPE_DIFFERENCE:
+                return False
+    return True      
+
+# Calculate escape value if necessary otherwise return it from the cache
+def determine_pixel_escape(xp1, yp1, xm1, ym1, map, iterations, gradient):
+    val = get_pixel(xp1, yp1, map)
+    if val == -MAX_ITER or val >= 0:
+        escape_value = get_escape_proximity(xm1, ym1, iterations)
+        set_pixel(xp1, yp1, map, -escape_value)
+        return escape_value
+    return -val
+
+# Set a pixel value in the map
+def set_pixel(xp, yp, map, value):
+    if xp < 0 or xp >= 64 or yp < 0 or yp >= 32:
+        fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
+    map[yp][xp] = value
+
+# Get a pixel value from the map
+def get_pixel(xp, yp, map):
+    if xp < 0 or xp >= 64 or yp < 0 or yp >= 32:
+        fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
+    return map[yp][xp]
+
+# A map contains either the escape value for that point (as a negative number)
+# or the pixel color (as a positive value) or -MAX_ITER (uninitialized)
+def create_empty_map(): 
+    map = list()
+    for y in range(32):
+        row = list()
+        for x in range(64):
+            row.append(-MAX_ITER)
+        map.append(row)    
+    return map
+
+def draw_mandelbrot(gradient, zoom_level):
+    iterations = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
+    xrange = MAXX - MINX
+    midx = MINX + xrange / 2.0
+    map = create_empty_map()
+    map = render_mandelbrot_area(0, 0, 31, 31, MINX, MINY, midx, MAXY, map, iterations, gradient)
+    map = render_mandelbrot_area(32, 0, 63, 31, midx, MINY, MAXX, MAXY, map, iterations, gradient)
+    rows = list()
+    
+    # Loop through each pixel in the display (64x32)
+    for y in range(32):
+        row = list()
+        next_color = ""
+        run_length = 0
+
+        for x in range(64):
+            color = get_pixel(x, y, map)
+            if type(color) == 'int' and color < 0:
+                color = get_gradient_color(-color, gradient)
+
+            # Add a 1x1 box with the appropriate color to the row        
+            if next_color == "": # First color of row
+                run_length = 1
+                next_color = color
+            elif color == next_color: # Color run detected
+                run_length += 1
+            else: # Color change
+                if run_length == 1 and next_color == BLACK_COLOR:
+                    row.append(BLACK_PIXEL)
+                else:
+                    row.append(render.Box(width=run_length, height=1, color=next_color))
+                run_length = 1
+                next_color = color
+
+        # Add last box
+        if run_length == 1 and next_color == BLACK_COLOR:
+            row.append(BLACK_PIXEL)
+        else:
+            row.append(render.Box(width=run_length, height=1, color=next_color))
+
+        # Add the row to the grid
+        rows.append(render.Row(children = row))
+
+    return render.Column(
+        children = rows,
+    )
+
