@@ -14,10 +14,10 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.04
-FRAME_DURATION_MS = 100
+ZOOM_GROWTH = 1.05
+FRAME_DURATION_MS = 80
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 30
+MIN_ITER = 20
 ZOOM_TO_ITER = 1.0
 BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
@@ -28,13 +28,13 @@ POI_ACROSS = 20
 POI_DOWN = 10
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
-NUM_GRADIENT_STEPS = 6
-MIN_ESCAPE_DIFFERENCE = -1
-MIN_ESCAPE_OPT_ITER = 100
+NUM_GRADIENT_STEPS = 32
+OPTIMIZE_MIN_ESC_DIFF = 0
+OPTIMIZE_MIN_ITER = 1000
 
 def main(config):
-    #random.seed(time.now().unix)
-    random.seed(0)
+    random.seed(time.now().unix)
+    #random.seed(0)
 
     # Generate the animation with all frames
     frames = get_animation_frames()
@@ -154,7 +154,10 @@ def get_gradient_color(iter, gradient):
         return BLACK_COLOR
 
     # Normalize iteration count between 0 and 1
-    t = iter / MAX_ITER % 1.0
+    # t = iter / MAX_ITER % 1.0
+
+    t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
+
 
     # Number of keyframes
     num_keyframes = len(gradient) - 1
@@ -292,7 +295,7 @@ def similar_iterations(escapes):
     size = len(escapes)
     if size > 1:
         for i in range(1, size):
-            if escapes[i] > MIN_ESCAPE_OPT_ITER or abs(escapes[0] - escapes[i]) > MIN_ESCAPE_DIFFERENCE:
+            if escapes[i] > OPTIMIZE_MIN_ITER or abs(escapes[0] - escapes[i]) > OPTIMIZE_MIN_ESC_DIFF:
                 return False
     return True      
 
