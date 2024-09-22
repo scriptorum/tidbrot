@@ -14,26 +14,27 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.02
-FRAME_DURATION_MS = 80
+ZOOM_GROWTH = 1.04
+FRAME_DURATION_MS = 100
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 200
-ZOOM_TO_ITER = 1.1
+MIN_ITER = 30
+ZOOM_TO_ITER = 1.0
 BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 MAX_INT = int(math.pow(2, 53))
-CTRX, CTRY, MINX, MAXX, MINY, MAXY = -0.75, 0, -2.5, 1.0, -0.875, 0.8753
+CTRX, CTRY, MINX, MINY, MAXX, MAXY = -0.75, 0, -2.5, -0.875, 1.0, 0.8753
 POI_CHECKS_PER_ZOOM_LEVEL = 100
 POI_ACROSS = 20
 POI_DOWN = 10
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
 NUM_GRADIENT_STEPS = 6
-MIN_ESCAPE_DIFFERENCE = 5
+MIN_ESCAPE_DIFFERENCE = -1
+MIN_ESCAPE_OPT_ITER = 100
 
 def main(config):
-    random.seed(time.now().unix)
-    #random.seed(0)
+    #random.seed(time.now().unix)
+    random.seed(0)
 
     # Generate the animation with all frames
     frames = get_animation_frames()
@@ -45,7 +46,8 @@ def main(config):
 def get_animation_frames():
     print("Determining point of interest")
     tx, ty = find_point_of_interest()   # Choose a point of interest    
-    #tx,ty = -0.74364388703, 0.13182590421
+    # tx,ty = -0.74364388703, 0.13182590421
+    #tx,ty = 0,0
     x, y = CTRX, CTRY                   # Mandelbrot starts centered
     zoom_level = 1.0                    # Initialize zoom level
     frames = list()                     # List to store frames of the animation
@@ -56,7 +58,7 @@ def get_animation_frames():
     print("Generating frames")
     for frame in range(MAX_FRAMES):
         print("Generating frame #" + str(frame))
-        frame = draw_mandelbrot(gradient, zoom_level)
+        frame = draw_mandelbrot(x, y, gradient, zoom_level)
         frames.append(frame)
         zoom_level *= ZOOM_GROWTH
         x, y = (x * 0.9 + tx * 0.1), (y * 0.9 + ty * 0.1)
@@ -97,7 +99,7 @@ def find_interesting_point_near(x, y, zoom_level, frame_num, last_escape):
 
     for newy in float_range(miny + offy, maxy + offy, POI_ACROSS):
         for newx in float_range(minx + offx, maxx + offx, POI_DOWN):
-            escape_distance = get_escape_proximity(newx, newy, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
+            _, escape_distance = mandelbrot_calc(newx, newy, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
 
             # Look for points with a magnitude close to the escape threshold (4) without exceeding it
             if escape_distance < ESCAPE_THRESHOLD and escape_distance > best_escape:
@@ -109,16 +111,13 @@ def find_interesting_point_near(x, y, zoom_level, frame_num, last_escape):
 
     return best_x, best_y, best_escape
 
-
-# Escape proximity calculation
-def get_escape_proximity(a, b, iter_limit):
-    _, escape_distance = mandelbrot_calc(a, b, iter_limit)
-    return escape_distance
-
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
     return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
 
+# Performs the mandelbrot calculation on a single point
+# Returns both the escape distance and the number of iterations 
+# (cannot exceed iter_limit)
 def mandelbrot_calc(a, b, iter_limit):
     zr, zi, cr, ci = 0.0, 0.0, a, b
 
@@ -128,16 +127,17 @@ def mandelbrot_calc(a, b, iter_limit):
         zr2 = zr * zr
         zi2 = zi * zi
 
-        # Perform z = z^2 + c
-        zi = 2 * zr * zi + ci
-        zr = zr2 - zi2 + cr
-
-        # Check if the point has escaped
+        # Check if the point has escaped (this should happen after both zr and zi are updated)
         dist = zr2 + zi2
         if dist > ESCAPE_THRESHOLD:
             return iter, dist
 
-    return iter_limit, dist
+        # Perform z = z^2 + c
+        zi = 2 * zr * zi + ci
+        zr = zr2 - zi2 + cr
+
+    return MAX_ITER, dist
+
 
 def int_to_hex(n):
     if n > 255:
@@ -150,7 +150,7 @@ def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def get_gradient_color(iter, gradient):
-    if iter > MAX_ITER:
+    if iter >= MAX_ITER:
         return BLACK_COLOR
 
     # Normalize iteration count between 0 and 1
@@ -224,67 +224,86 @@ def hsl_to_hex(h, s, l):
     g = int((g + m) * 255)
     b = int((b + m) * 255)
 
-def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, iterations, gradient):
+def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, max_iter, gradient):
+    # print("Rendering area " + str(xp1) + "," + str(yp1) + " to " + str(xp2) + "," + str(yp2) \
+    #     + " which is " + str(xm1) + "," + str(ym1) + " to " + str(xm2) + "," + str(ym2)) 
+    # if xp1 < 0 or xp2 >=64 or yp1 < 0 or yp2 >= 32 or xm1 < MINX or xm2 > MAXX or ym1 < MINY or ym2 > MAXY:
+        # fail("One or more coordinates is out of range PT1:", xp1, yp2, "PT2:", xp2, yp2, "MB1:", xm1, ym1, "MB2:", xm2, ym2)
+
     dxp, dyp  = int(xp2 - xp1), int(yp2 - yp1) # Difference between pixel numbers
     dxm, dym = xm2 - xm1 / float(dxp), xm2 - xm1 / float(dxp) # Range of mb set area
 
     # check four corners
-    esc1 = determine_pixel_escape(xp1, yp1, xm1, ym1, map, iterations, gradient)
-    esc2 = determine_pixel_escape(xp1, yp2, xm1, ym2, map, iterations, gradient)
-    esc3 = determine_pixel_escape(xp2, yp2, xm2, ym2, map, iterations, gradient)
-    esc4 = determine_pixel_escape(xp2, yp1, xm2, ym1, map, iterations, gradient)
+    iter1 = get_cached_pixel(xp1, yp1, xm1, ym1, map, max_iter)
+    iter2 = get_cached_pixel(xp1, yp2, xm1, ym2, map, max_iter)
+    iter3 = get_cached_pixel(xp2, yp2, xm2, ym2, map, max_iter)
+    iter4 = get_cached_pixel(xp2, yp1, xm2, ym1, map, max_iter)
 
     # if iteration count is very close, assume entire rectangle escapes at that iteration
-    if escape_similar([esc1, esc2, esc3, esc4]):
+    if similar_iterations([iter1, iter2, iter3, iter4]):
+        # print("Similar iterations (" + str(iter1) + "," + str(iter2) + "," + str(iter3) + "," + str(iter4) + "), flood filling") 
+        color = get_gradient_color(iter1, gradient)
         for y in range(yp1, yp2 + 1):
             for x in range(xp1, xp2 + 1):
-                set_pixel(x, y, map, get_gradient_color(esc1, gradient))
+                set_pixel(x, y, map, color)
 
     # if not, subdivide with more points
     else:
         # Subdivide on x
         if dxp > 2 and dxp >= dyp:
-            halfxp = dxp / 2
-            splitxp = int(halfxp) + xp1
-            splitxm1 = dxm * halfxp + xm1
-            splitxm2 = dxm * (dxp - halfxp) + xm1
-            render_mandelbrot_area(xp1, yp1, splitxp, yp2, xm1, ym1, splitxm1, ym2, map, iterations, gradient)
-            render_mandelbrot_area(splitxp+1, yp1, xp2, yp2, splitxm2, ym1, xm2, ym2, map, iterations, gradient)
+            # print("* Splitting horizontally")
+            pixel_width = (xm2 - xm1) / dxp
+            splitxp = int(dxp / 2)
+            sxp_left = splitxp + xp1
+            sxp_right = sxp_left + 1
+            sxm_left = xm1 + splitxp * pixel_width
+            sxm_right = xm1 + (splitxp + 1) * pixel_width
+            map = render_mandelbrot_area(xp1, yp1, sxp_left, yp2, xm1, ym1, sxm_left, ym2, map, max_iter, gradient)
+            map = render_mandelbrot_area(sxp_right, yp1, xp2, yp2, sxm_right, ym1, xm2, ym2, map, max_iter, gradient)
 
         # Subdivide on y
         elif dyp > 2 and dyp >= dxp:
-            halfyp = dyp / 2
-            splityp = int(halfyp) + yp1
-            splitym1 = dym * halfyp + ym1
-            splitym2 = dym * (dyp - halfyp) + ym1
-            render_mandelbrot_area(xp1, yp1, xp2, splityp, xm1, ym1, xm2, splitym1, map, iterations, gradient)
-            render_mandelbrot_area(xp1, splityp+1, xp2, yp2, xm1, splitym2, xm2, ym2, map, iterations, gradient)
+            # print("* Splitting vertically")
+            pixel_height = (ym2 - ym1) / dyp
+            splityp = int(dyp / 2)
+            syp_top = splityp + yp1
+            syp_bottom = syp_top + 1
+            sym_top = ym1 + splityp * pixel_height
+            sym_bottom = ym1 + (splityp + 1) * pixel_height
+            map = render_mandelbrot_area(xp1, yp1, xp2, syp_top, xm1, ym1, xm2, sym_top, map, max_iter, gradient)
+            map = render_mandelbrot_area(xp1, syp_bottom, xp2, yp2, xm1, sym_bottom, xm2, ym2, map, max_iter, gradient)
 
         # No more subdivision
         else:
-            set_pixel(xp1, yp1, map, get_gradient_color(esc1, gradient))
-            set_pixel(xp1, yp2, map, get_gradient_color(esc2, gradient))
-            set_pixel(xp2, yp2, map, get_gradient_color(esc3, gradient))
-            set_pixel(xp2, yp1, map, get_gradient_color(esc4, gradient))
+            grad1 = get_gradient_color(iter1, gradient)
+            grad2 = get_gradient_color(iter2, gradient)
+            grad3 = get_gradient_color(iter3, gradient)
+            grad4 = get_gradient_color(iter4, gradient)
+            # print("* Coloring borders (" + grad1 + "/" + grad2 + "/" + grad3 + "/" + grad4 + ") and calling it a day")
+            set_pixel(xp1, yp1, map, grad1)
+            set_pixel(xp1, yp2, map, grad2)
+            set_pixel(xp2, yp2, map, grad3)
+            set_pixel(xp2, yp1, map, grad4)
     
     # All done
     return map
 
-def escape_similar(escapes):
+def similar_iterations(escapes):
     size = len(escapes)
     if size > 1:
         for i in range(1, size):
-            if abs(escapes[0] - escapes[i]) > MIN_ESCAPE_DIFFERENCE:
+            if escapes[i] > MIN_ESCAPE_OPT_ITER or abs(escapes[0] - escapes[i]) > MIN_ESCAPE_DIFFERENCE:
                 return False
     return True      
 
 # Calculate escape value if necessary otherwise return it from the cache
-def determine_pixel_escape(xp1, yp1, xm1, ym1, map, iterations, gradient):
+def get_cached_pixel(xp1, yp1, xm1, ym1, map, iterations):
     val = get_pixel(xp1, yp1, map)
-    if val == -MAX_ITER or val >= 0:
-        escape_value = get_escape_proximity(xm1, ym1, iterations)
-        set_pixel(xp1, yp1, map, -escape_value)
-        return escape_value
+    if val == MAX_INT or val >= 0:
+        (iter, esc) = mandelbrot_calc(xm1, ym1, iterations)
+        # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
+        set_pixel(xp1, yp1, map, -iter)
+        return iter
     return -val
 
 # Set a pixel value in the map
@@ -300,26 +319,34 @@ def get_pixel(xp, yp, map):
     return map[yp][xp]
 
 # A map contains either the escape value for that point (as a negative number)
-# or the pixel color (as a positive value) or -MAX_ITER (uninitialized)
+# or the pixel color (as a positive value) or MAX_INT (uninitialized)
 def create_empty_map(): 
     map = list()
     for y in range(32):
         row = list()
         for x in range(64):
-            row.append(-MAX_ITER)
+            row.append(int(MAX_INT))
         map.append(row)    
     return map
 
-def draw_mandelbrot(gradient, zoom_level):
+def draw_mandelbrot(center_x, center_y, gradient, zoom_level):
     iterations = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
-    xrange = MAXX - MINX
-    midx = MINX + xrange / 2.0
-    map = create_empty_map()
-    map = render_mandelbrot_area(0, 0, 31, 31, MINX, MINY, midx, MAXY, map, iterations, gradient)
-    map = render_mandelbrot_area(32, 0, 63, 31, midx, MINY, MAXX, MAXY, map, iterations, gradient)
-    rows = list()
     
+    # Determine coordinates
+    half_width = (MAXX - MINX) / zoom_level / 2.0
+    half_height = (MAXY - MINY) / zoom_level / 2.0
+    minx, miny  = center_x - half_width, center_y - half_height
+    maxx, maxy  = center_x + half_width, center_y + half_height
+
+    # Create the map
+    map = create_empty_map()    
+    map = render_mandelbrot_area(0, 0, 63, 31, minx, miny, maxx, maxy, map, iterations, gradient)
+    return render_map(map, gradient)
+
+# Converts a map to a Tidbyt Column made up of Rows made up of Boxes
+def render_map(map, gradient):
     # Loop through each pixel in the display (64x32)
+    rows = list()
     for y in range(32):
         row = list()
         next_color = ""
