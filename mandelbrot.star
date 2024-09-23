@@ -1,13 +1,9 @@
 #
 # TODO
 # - Expose some optimization controls 
-# - Adjust neighboring iterations based on sample escape times:
-#   - if a point escapes quickly, reduce the iterations)
-# - Bounding box optimizaitons:
-#   - sample 4 points
-#   - if iteration count is very close, assume entire rectangle escapes at that iteration
-#   - if not, subdivide with more points
-#   - force horizontal subdivision of first four points, to avoid mandelbrot symmetry causing false fill
+# - Verify get_cached_pixel isn't recalculating color
+# - Introduce natural log * 1.55 scaling for color gradient
+# - Does it make sense to come up with a point map, so I don't have to keep calculating mandelbrot coords at each zoom level?
 # 
 load("random.star", "random")
 load("render.star", "render")
@@ -23,16 +19,15 @@ BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 MAX_INT = int(math.pow(2, 53))
 CTRX, CTRY, MINX, MINY, MAXX, MAXY = -0.75, 0, -2.5, -0.875, 1.0, 0.8753
-POI_ACROSS = 16
-POI_DOWN = 8
-POI_ZOOM_GROWTH = ZOOM_GROWTH + 0.02
+POI_ACROSS = 50
+POI_DOWN = 25
+POI_ZOOM_GROWTH = ZOOM_GROWTH
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
 NUM_GRADIENT_STEPS = 32
 OPTIMIZE_MIN_ESC_DIFF = 1
 OPTIMIZE_MIN_ITER = 1000
-# MX_TO_PX = ((MAXX - MINX) / 64.0 + MINX) / zoom_level
-# MY_TO_PY = ((MAXY - MINY) / 32.0 + MINY) / zoom_level
+GRADIENT_SCALE_FACTOR = 1.55
 
 def main(config):
     random.seed(time.now().unix)
@@ -156,7 +151,8 @@ def get_gradient_color(iter, gradient):
         return BLACK_COLOR
 
     # Convert iterations to a color
-    t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
+    # t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
+    t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / NUM_GRADIENT_STEPS) % 1.0
 
     # Number of keyframes
     num_keyframes = len(gradient) - 1
@@ -321,7 +317,9 @@ def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, iter, gr
 def get_cached_pixel(xp1, yp1, xm1, ym1, map, iterations):
     val = get_pixel(xp1, yp1, map)
     if val == MAX_INT or val >= 0:
-        iter, _ = mandelbrot_calc(xm1, ym1, iterations)
+        iter, esc = mandelbrot_calc(xm1, ym1, iterations)
+        if val != MAX_INT:
+            print("RECALC for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
         set_pixel(xp1, yp1, map, -iter)
         return iter
