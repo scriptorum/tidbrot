@@ -14,7 +14,7 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.05
+ZOOM_GROWTH = 1.06
 FRAME_DURATION_MS = 80
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
 MIN_ITER = 20
@@ -23,14 +23,16 @@ BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 MAX_INT = int(math.pow(2, 53))
 CTRX, CTRY, MINX, MINY, MAXX, MAXY = -0.75, 0, -2.5, -0.875, 1.0, 0.8753
-POI_CHECKS_PER_ZOOM_LEVEL = 100
-POI_ACROSS = 20
-POI_DOWN = 10
+POI_ACROSS = 16
+POI_DOWN = 8
+POI_ZOOM_GROWTH = ZOOM_GROWTH + 0.02
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
 NUM_GRADIENT_STEPS = 32
-OPTIMIZE_MIN_ESC_DIFF = 0
+OPTIMIZE_MIN_ESC_DIFF = 1
 OPTIMIZE_MIN_ITER = 1000
+# MX_TO_PX = ((MAXX - MINX) / 64.0 + MINX) / zoom_level
+# MY_TO_PY = ((MAXY - MINY) / 32.0 + MINY) / zoom_level
 
 def main(config):
     random.seed(time.now().unix)
@@ -85,7 +87,7 @@ def find_point_of_interest():
     for num in range(MAX_FRAMES):
         x, y, last_escape = find_interesting_point_near(x, y, zoom, num, last_escape)
         print("Settled on POI " + str(x) + "," + str(y) + " with zoom " + str(zoom) + " esc:" + str(last_escape))
-        zoom *= ZOOM_GROWTH
+        zoom *= POI_ZOOM_GROWTH
     return (x, y)
 
 def find_interesting_point_near(x, y, zoom_level, frame_num, last_escape):
@@ -153,11 +155,8 @@ def get_gradient_color(iter, gradient):
     if iter >= MAX_ITER:
         return BLACK_COLOR
 
-    # Normalize iteration count between 0 and 1
-    # t = iter / MAX_ITER % 1.0
-
+    # Convert iterations to a color
     t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
-
 
     # Number of keyframes
     num_keyframes = len(gradient) - 1
@@ -227,83 +226,102 @@ def hsl_to_hex(h, s, l):
     g = int((g + m) * 255)
     b = int((b + m) * 255)
 
-def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, max_iter, gradient):
-    # print("Rendering area " + str(xp1) + "," + str(yp1) + " to " + str(xp2) + "," + str(yp2) \
-    #     + " which is " + str(xm1) + "," + str(ym1) + " to " + str(xm2) + "," + str(ym2)) 
-    # if xp1 < 0 or xp2 >=64 or yp1 < 0 or yp2 >= 32 or xm1 < MINX or xm2 > MAXX or ym1 < MINY or ym2 > MAXY:
-        # fail("One or more coordinates is out of range PT1:", xp1, yp2, "PT2:", xp2, yp2, "MB1:", xm1, ym1, "MB2:", xm2, ym2)
+def render_line_opt(last_iter, xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, max_iter):
+    # Determine whether the line is vertical or horizontal
+    is_vertical = xp2 == xp1
+    
+    # Set start and end based on whether the line is vertical or horizontal
+    if is_vertical:
+        start, end = yp1, yp2
+    else:
+        start, end = xp1, xp2
 
-    dxp, dyp  = int(xp2 - xp1), int(yp2 - yp1) # Difference between pixel numbers
-    dxm, dym = xm2 - xm1 / float(dxp), xm2 - xm1 / float(dxp) # Range of mb set area
+    # Initialize xp, yp and xm, ym for iteration
+    xp, yp = xp1, yp1
+    xm, ym = xm1, ym1
 
-    # check four corners
-    iter1 = get_cached_pixel(xp1, yp1, xm1, ym1, map, max_iter)
-    iter2 = get_cached_pixel(xp1, yp2, xm1, ym2, map, max_iter)
-    iter3 = get_cached_pixel(xp2, yp2, xm2, ym2, map, max_iter)
-    iter4 = get_cached_pixel(xp2, yp1, xm2, ym1, map, max_iter)
+    for val in range(start, end + 1):        
+        # Update xm and ym based on whether it's vertical or horizontal
+        if is_vertical:
+            ym = map_range(val, yp1, yp2, ym1, ym2)
+            yp = val  # Update yp in vertical case
+        else:
+            xm = map_range(val, xp1, xp2, xm1, xm2)
+            xp = val  # Update xp in horizontal case
 
-    # if iteration count is very close, assume entire rectangle escapes at that iteration
-    if similar_iterations([iter1, iter2, iter3, iter4]):
-        # print("Similar iterations (" + str(iter1) + "," + str(iter2) + "," + str(iter3) + "," + str(iter4) + "), flood filling") 
-        color = get_gradient_color(iter1, gradient)
+        # Get the pixel iteration count
+        pixel = get_cached_pixel(xp, yp, xm, ym, map, max_iter)
+
+        # Initialize last_iter on first iteration
+        if last_iter == -1:
+            last_iter = pixel
+        # Bail out early if iterations don't match
+        elif last_iter != pixel:
+            return False
+        
+    # All iterations along the line were identical
+    return last_iter
+
+
+def render_mandelbrot_area(xp1, yp1, xp2, yp2, xm1, ym1, xm2, ym2, map, iter, gradient):
+    dxp, dyp = int(xp2 - xp1), int(yp2 - yp1)
+    dxm, dym = (xm2 - xm1) / float(dxp), (ym2 - ym1) / float(dyp)
+
+    # A border with the same iterations can be filled with the same color
+    line_iter = render_line_opt(-1, xp1, yp1, xp2, yp1, xm1, ym1, xm2, ym1, map, iter)
+    if line_iter != False:
+        line_iter = render_line_opt(line_iter, xp1, yp2, xp2, yp2, xm1, ym2, xm2, ym2, map, iter)
+    if line_iter != False:
+        line_iter = render_line_opt(line_iter, xp1, yp1, xp1, yp2, xm1, ym1, xm1, ym2, map, iter)
+    if line_iter != False:
+        line_iter = render_line_opt(line_iter, xp2, yp1, xp2, yp2, xm2, ym1, xm1, ym2, map, iter)
+    if line_iter != False:
+        color = get_gradient_color(line_iter, gradient)
+        # print("Flooding filling region:", xp1, yp1, xp2, yp2, " to color ", color)
         for y in range(yp1, yp2 + 1):
             for x in range(xp1, xp2 + 1):
                 set_pixel(x, y, map, color)
+        return map
 
-    # if not, subdivide with more points
+    # Subdivide further
     else:
-        # Subdivide on x
         if dxp > 2 and dxp >= dyp:
-            # print("* Splitting horizontally")
-            pixel_width = (xm2 - xm1) / dxp
+            # Horizontal split
             splitxp = int(dxp / 2)
             sxp_left = splitxp + xp1
             sxp_right = sxp_left + 1
-            sxm_left = xm1 + splitxp * pixel_width
-            sxm_right = xm1 + (splitxp + 1) * pixel_width
-            map = render_mandelbrot_area(xp1, yp1, sxp_left, yp2, xm1, ym1, sxm_left, ym2, map, max_iter, gradient)
-            map = render_mandelbrot_area(sxp_right, yp1, xp2, yp2, sxm_right, ym1, xm2, ym2, map, max_iter, gradient)
-
-        # Subdivide on y
+            sxm_left = xm1 + splitxp * dxm
+            sxm_right = xm1 + (splitxp + 1) * dxm
+            map = render_mandelbrot_area(xp1, yp1, sxp_left, yp2, xm1, ym1, sxm_left, ym2, map, iter, gradient)
+            map = render_mandelbrot_area(sxp_right, yp1, xp2, yp2, sxm_right, ym1, xm2, ym2, map, iter, gradient)
         elif dyp > 2 and dyp >= dxp:
-            # print("* Splitting vertically")
-            pixel_height = (ym2 - ym1) / dyp
+            # Vertical split
             splityp = int(dyp / 2)
             syp_top = splityp + yp1
             syp_bottom = syp_top + 1
-            sym_top = ym1 + splityp * pixel_height
-            sym_bottom = ym1 + (splityp + 1) * pixel_height
-            map = render_mandelbrot_area(xp1, yp1, xp2, syp_top, xm1, ym1, xm2, sym_top, map, max_iter, gradient)
-            map = render_mandelbrot_area(xp1, syp_bottom, xp2, yp2, xm1, sym_bottom, xm2, ym2, map, max_iter, gradient)
-
-        # No more subdivision
+            sym_top = ym1 + splityp * dym
+            sym_bottom = ym1 + (splityp + 1) * dym
+            map = render_mandelbrot_area(xp1, yp1, xp2, syp_top, xm1, ym1, xm2, sym_top, map, iter, gradient)
+            map = render_mandelbrot_area(xp1, syp_bottom, xp2, yp2, xm1, sym_bottom, xm2, ym2, map, iter, gradient)
         else:
-            grad1 = get_gradient_color(iter1, gradient)
-            grad2 = get_gradient_color(iter2, gradient)
-            grad3 = get_gradient_color(iter3, gradient)
-            grad4 = get_gradient_color(iter4, gradient)
-            # print("* Coloring borders (" + grad1 + "/" + grad2 + "/" + grad3 + "/" + grad4 + ") and calling it a day")
+            # Final coloring with individual points
+            grad1 = get_gradient_color(get_cached_pixel(xp1, yp1, xm1, ym1, map, iter), gradient)
+            grad2 = get_gradient_color(get_cached_pixel(xp1, yp2, xm1, ym2, map, iter), gradient)
+            grad3 = get_gradient_color(get_cached_pixel(xp2, yp2, xm2, ym2, map, iter), gradient)
+            grad4 = get_gradient_color(get_cached_pixel(xp2, yp1, xm2, ym1, map, iter), gradient)
+
             set_pixel(xp1, yp1, map, grad1)
             set_pixel(xp1, yp2, map, grad2)
             set_pixel(xp2, yp2, map, grad3)
             set_pixel(xp2, yp1, map, grad4)
-    
-    # All done
+
     return map
 
-def similar_iterations(escapes):
-    size = len(escapes)
-    if size > 1:
-        for i in range(1, size):
-            if escapes[i] > OPTIMIZE_MIN_ITER or abs(escapes[0] - escapes[i]) > OPTIMIZE_MIN_ESC_DIFF:
-                return False
-    return True      
-
-# Calculate escape value if necessary otherwise return it from the cache
+# Calculate iterations to escape for a pixel if necessary otherwise return it from the cache
 def get_cached_pixel(xp1, yp1, xm1, ym1, map, iterations):
     val = get_pixel(xp1, yp1, map)
     if val == MAX_INT or val >= 0:
-        (iter, esc) = mandelbrot_calc(xm1, ym1, iterations)
+        iter, _ = mandelbrot_calc(xm1, ym1, iterations)
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
         set_pixel(xp1, yp1, map, -iter)
         return iter
