@@ -10,28 +10,29 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.06
-FRAME_DURATION_MS = 80
+ZOOM_GROWTH = 1.1
+FRAME_DURATION_MS = 200
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
 MIN_ITER = 20
-ZOOM_TO_ITER = 1.0
+ZOOM_TO_ITER = 1
+MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)
 BLACK_COLOR = "#000000"
 ESCAPE_THRESHOLD = 4.0
 MAX_INT = int(math.pow(2, 53))
 CTRX, CTRY, MINX, MINY, MAXX, MAXY = -0.75, 0, -2.5, -0.875, 1.0, 0.8753
-POI_ACROSS = 50
-POI_DOWN = 25
 POI_ZOOM_GROWTH = ZOOM_GROWTH
+POI_ZOOM_DEPTH = MAX_FRAMES #26 #int(math.pow(MAX_ZOOM, 1/POI_ZOOM_GROWTH))  # int(MAX_FRAMES / FRAME_DURATION)
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
 MAX_ITER = math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1
 NUM_GRADIENT_STEPS = 32
 OPTIMIZE_MIN_ESC_DIFF = 1
 OPTIMIZE_MIN_ITER = 1000
-GRADIENT_SCALE_FACTOR = 1.55
+GRADIENT_SCALE_FACTOR = 2 # 1.55
+BOUNDARY_THRESHOLD = 20
+AA_JITTER_SAMPLES = 4
 
 def main(config):
-    random.seed(time.now().unix)
-    #random.seed(0)
+    #random.seed(1)
 
     # Generate the animation with all frames
     frames = get_animation_frames()
@@ -62,6 +63,7 @@ def get_animation_frames():
 
     actual_max_iter = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(MAX_ITER) + " Actual:" + str(actual_max_iter))
+    print("Final zoom level:", zoom_level)
 
     return frames
 
@@ -79,34 +81,48 @@ def float_range(start, end, num_steps, inclusive=False):
 
 def find_point_of_interest():
     x, y, zoom, last_escape = CTRX, CTRY, 1, 0
-    for num in range(MAX_FRAMES):
-        x, y, last_escape = find_interesting_point_near(x, y, zoom, num, last_escape)
-        print("Settled on POI " + str(x) + "," + str(y) + " with zoom " + str(zoom) + " esc:" + str(last_escape))
+    for num in range(POI_ZOOM_DEPTH):
+        x, y, last_escape = trace_boundary(x, y, zoom, num)
+        print("Settled on POI " + str(x) + "," + str(y) + " with zoom " + str(zoom) + " esc: " + str(last_escape))
         zoom *= POI_ZOOM_GROWTH
-    return (x, y)
+    print("POI final zoom level:", zoom)
+    return x, y
 
-def find_interesting_point_near(x, y, zoom_level, frame_num, last_escape):
+def trace_boundary(x, y, zoom_level, frame_num):
     step = 1 / zoom_level
-    (best_x, best_y, best_escape) = x, y, last_escape
-    early_threshold = ESCAPE_THRESHOLD - 1 + frame_num / MAX_FRAMES
-    minx, maxx, miny, maxy = MINX*step, MAXX*step, MINY*step, MAXY*step
-    w, h = maxx-minx, maxy-miny
-    stepx, stepy = w / POI_ACROSS, h / POI_DOWN
-    offx, offy = rnd() * stepx + x, rnd() * stepy + y
+    grid_size = 50  # Adjust grid size depending on zoom level or fixed value
+    points_of_interest = []
+    best_x, best_y, best_escape = x, y, 0
+    
+    for i in range(grid_size):
+        for j in range(grid_size):
+            # Sample points in the zoomed region
+            x_sample = x + i * step
+            y_sample = y + j * step
 
-    for newy in float_range(miny + offy, maxy + offy, POI_ACROSS):
-        for newx in float_range(minx + offx, maxx + offx, POI_DOWN):
-            _, escape_distance = mandelbrot_calc(newx, newy, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
+            # Compute the escape distance at the current point
+            iter1, dist1 = mandelbrot_calc(x_sample, y_sample, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
 
-            # Look for points with a magnitude close to the escape threshold (4) without exceeding it
-            if escape_distance < ESCAPE_THRESHOLD and escape_distance > best_escape:
-                print(" - Found better POI", newx, newy, "has escape", escape_distance)
-                best_x, best_y, best_escape = newx, newy, escape_distance
-                if escape_distance > early_threshold:
-                    print (" --- AND BREAKING EARLY")
-                    break
+            # Check adjacent points for boundary detection
+            x_adjacent = x_sample + step
+            y_adjacent = y_sample + step
+            iter2, dist2 = mandelbrot_calc(x_adjacent, y_adjacent, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
+
+            # If there is a significant difference in escape distances, we found a boundary
+            if abs(iter1 - iter2) > BOUNDARY_THRESHOLD:
+                points_of_interest.append((x_sample, y_sample, dist1))
+
+                # Choose the point closest to the escape threshold (without exceeding it)
+                if dist1 > best_escape and dist1 < ESCAPE_THRESHOLD:
+                    best_x, best_y, best_escape = x_sample, y_sample, dist1
+
+    # If no boundary is found, return the current best point
+    if len(points_of_interest) == 0:
+        print("No boundary found at this level, returning best found POI")
+        return best_x, best_y, best_escape
 
     return best_x, best_y, best_escape
+
 
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
@@ -115,8 +131,8 @@ def map_range(v, min1, max1, min2, max2):
 # Performs the mandelbrot calculation on a single point
 # Returns both the escape distance and the number of iterations 
 # (cannot exceed iter_limit)
-def mandelbrot_calc(a, b, iter_limit):
-    zr, zi, cr, ci = 0.0, 0.0, a, b
+def mandelbrot_calc(x, y, iter_limit):
+    zr, zi, cr, ci = 0.0, 0.0, x, y
 
     dist = 0
     for iter in range(1, iter_limit + 1):
@@ -135,6 +151,20 @@ def mandelbrot_calc(a, b, iter_limit):
 
     return MAX_ITER, dist
 
+def aa_mandelbrot_calc(x, y, iter_limit):
+    # iter, esc = mandelbrot_calc(x, y, iter_limit)
+    # if esc > 4 or abs(4 - esc) < 1:
+    #     return iter
+
+    iter_total = 0
+    jitter_amount = 1.0 / (float(iter_limit) / ZOOM_TO_ITER)
+    for _ in range(AA_JITTER_SAMPLES):
+        jitter_x = x + (rnd() * jitter_amount) - 0.5 * jitter_amount  # Small random jitter
+        jitter_y = y + (rnd() * jitter_amount) - 0.5 * jitter_amount
+        iter, _ = mandelbrot_calc(jitter_x, jitter_y, iter_limit)
+        iter_total += iter
+
+    return int(iter_total / AA_JITTER_SAMPLES)
 
 def int_to_hex(n):
     if n > 255:
@@ -149,6 +179,10 @@ def rgb_to_hex(r, g, b):
 def get_gradient_color(iter, gradient):
     if iter >= MAX_ITER:
         return BLACK_COLOR
+
+    # For debugging to isolate gradient issues
+    # v = gradient[iter % NUM_GRADIENT_STEPS] 
+    # return rgb_to_hex(v[0], v[1], v[2])
 
     # Convert iterations to a color
     # t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
@@ -318,8 +352,10 @@ def get_cached_pixel(xp1, yp1, xm1, ym1, map, iterations):
     val = get_pixel(xp1, yp1, map)
     if val == MAX_INT or val >= 0:
         iter, esc = mandelbrot_calc(xm1, ym1, iterations)
-        if val != MAX_INT:
-            print("RECALC for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
+        #iter = aa_mandelbrot_calc(xm1, ym1, iterations)
+
+        # if val != MAX_INT:
+        #     print("RECALC for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
         set_pixel(xp1, yp1, map, -iter)
         return iter
