@@ -10,10 +10,10 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.1
-FRAME_DURATION_MS = 200
+ZOOM_GROWTH = 1.06
+FRAME_DURATION_MS = 80
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 20
+MIN_ITER = 10
 ZOOM_TO_ITER = 1
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)
 BLACK_COLOR = "#000000"
@@ -27,13 +27,15 @@ MAX_ITER = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FR
 NUM_GRADIENT_STEPS = 32
 OPTIMIZE_MIN_ESC_DIFF = 1
 OPTIMIZE_MIN_ITER = 1000
-GRADIENT_SCALE_FACTOR = 2 # 1.55
+GRADIENT_SCALE_FACTOR = 2 # 3 # 2 # 1.75 # 1.55
 BOUNDARY_THRESHOLD = 20
-AA_JITTER_SAMPLES = 4
 DISPLAY_WIDTH = 64
 DISPLAY_HEIGHT = 32
-MAX_PIXEL_X = DISPLAY_WIDTH - 1
-MAX_PIXEL_Y = DISPLAY_HEIGHT - 1
+OVERSAMPLE = 1
+OVERSAMPLE_WIDTH = DISPLAY_WIDTH * OVERSAMPLE
+OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE
+MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1
+MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1
 
 def main(config):
     random.seed(1)
@@ -49,8 +51,6 @@ def main(config):
 def get_animation_frames(app):
     print("Determining point of interest")
     tx, ty = find_point_of_interest()   # Choose a point of interest    
-    # tx,ty = -0.743DISPLAY_WIDTH388703, 0.13182590421
-    #tx,ty = 0,0
 
     x, y = CTRX, CTRY                   # Mandelbrot starts centered
     frames = list()                     # List to store frames of the animation
@@ -170,24 +170,25 @@ def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def get_gradient_color(app, iter):
-    if iter >= MAX_ITER:
-        return BLACK_COLOR
+    r,g,b = get_gradient_rgb(app,iter)
+    return rgb_to_hex(r, g, b)
+
+def get_gradient_rgb(app, iter):
+    if iter >= MAX_ITER or iter < 0:
+        return (0,0,0)
     
-    gradient = app['gradient']
-
-    # For debugging to isolate gradient issues
-    # v = gradient[iter % NUM_GRADIENT_STEPS] 
-    # return rgb_to_hex(v[0], v[1], v[2])
-
     # Convert iterations to a color
     # t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
     t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / NUM_GRADIENT_STEPS) % 1.0
+    #print("t:", t, "iter:", iter)
 
     # Number of keyframes
-    num_keyframes = len(gradient) - 1
+    num_keyframes = len(app['gradient']) - 1
+    #print("Num keyframes:", num_keyframes)
     
     # Ensure we are covering the whole gradient range
     frame_pos = t * num_keyframes
+    #print("Frame pos:", frame_pos)
     lower_frame = int(frame_pos)  # Index of the lower keyframe
     upper_frame = min(lower_frame + 1, num_keyframes)  # Index of the upper keyframe
     
@@ -195,16 +196,28 @@ def get_gradient_color(app, iter):
     local_t = frame_pos - float(lower_frame)
     
     # Get the colors of the two keyframes to blend between
-    color_start = gradient[lower_frame]
-    color_end = gradient[upper_frame]
+    color_start = app['gradient'][lower_frame]
+    color_end = app['gradient'][upper_frame]
     
     # Perform linear interpolation (LERP) between the two colors
     r = int(color_start[0] + local_t * (color_end[0] - color_start[0]))
     g = int(color_start[1] + local_t * (color_end[1] - color_start[1]))
     b = int(color_start[2] + local_t * (color_end[2] - color_start[2]))
 
-    # Return the hex color code
-    return rgb_to_hex(r, g, b)
+    return (r, g, b)
+
+def blend_rgbs(*rgbs):
+    length = len(rgbs)
+    if length == 1:
+        return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
+    
+    tr,tg,tb = 0, 0, 0
+    for i in range(0, length - 1):
+        r,g,b = rgbs[i]
+        tr += r
+        tg += g
+        tb += b
+    return rgb_to_hex(int(tr/length), int(tg/length), int(tb/length))
 
 def random_color_tuple():
     return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
@@ -214,12 +227,12 @@ def get_random_gradient():
     gradient = []
     color = random_color_tuple()
     for i in range(0, NUM_GRADIENT_STEPS):
-        color = alter_color(color)
+        color = alter_color_rgb(color)
         gradient.append(color)
     return gradient
 
 # At least one channel flipped, another randomized
-def alter_color(color):
+def alter_color_rgb(color):
     flip_idx = random.number(0,2)
     rnd_idx = (flip_idx + random.number(1,2)) % 3
     keep_idx = 3 - flip_idx - rnd_idx
@@ -305,8 +318,14 @@ def alt(obj, field, value):
 
 def render_mandelbrot_area(app, pix, set, iter_limit):
     dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
-    dxm, dym = (set['x2'] - set['x1']) / float(dxp), (set['y2'] - set['y1']) / float(dyp)
+    dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
     # print("render_mandelbrot_area:", pix, set, iter_limit, "dp:", dxp, dyp, "dm:", dxm, dym)
+
+    # No optimization render area:    
+    # for y in range(pix['y1'], pix['y2'] + 1):
+    #     for x in range(pix['x1'], pix['x2'] + 1):
+    #         cache_pixel(app, x, y, dxm * float(x) + set['x1'], dym * float(y) + set['y1'], iter_limit)
+    # return
 
     # A border with the same iterations can be filled with the same color
     match = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
@@ -356,9 +375,10 @@ def cache_pixel(app, xp, yp, xm, ym, iter_limit):
     stored_val = get_pixel(app, xp, yp)
     if stored_val == -1:
         iter, esc = mandelbrot_calc(xm, ym, iter_limit)
-
         if stored_val != -1:
             print("RECALC for pixel " + str(xp) + "," + str(yp) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm) + "," + str(ym))
+        if iter == iter_limit:
+            iter = MAX_ITER
 
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
 
@@ -368,23 +388,22 @@ def cache_pixel(app, xp, yp, xm, ym, iter_limit):
 
 # Set the number of iterations for a point on the map
 def set_pixel(app, xp, yp, value):
-    if xp < 0 or xp >= DISPLAY_WIDTH or yp < 0 or yp >= DISPLAY_HEIGHT:
+    if xp < 0 or xp >= OVERSAMPLE_WIDTH or yp < 0 or yp >= OVERSAMPLE_HEIGHT:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     app['map'][yp][xp] = value
 
 # Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
-    if xp < 0 or xp >= DISPLAY_WIDTH or yp < 0 or yp >= DISPLAY_HEIGHT:
+    if xp < 0 or xp >= OVERSAMPLE_WIDTH or yp < 0 or yp >= OVERSAMPLE_HEIGHT:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     return app['map'][yp][xp]
 
-# A map contains either the escape value for that point (as a negative number)
-# or the pixel color (as a positive value) or -1 (uninitialized)
+# A map contains either the escape value for that point or -1 (uninitialized)
 def create_empty_map(): 
     map = list()
-    for y in range(DISPLAY_HEIGHT):
+    for y in range(OVERSAMPLE_HEIGHT):
         row = list()
-        for x in range(DISPLAY_WIDTH):
+        for x in range(OVERSAMPLE_WIDTH):
             row.append(int(-1))
         map.append(row)    
     return map
@@ -403,49 +422,62 @@ def draw_mandelbrot(app, x, y):
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     app['map'] = create_empty_map()    
     render_mandelbrot_area(app, pix, set, iterations)
-    return render_map(app)
+    return render_display(app)
 
 # Converts a map to a Tidbyt Column made up of Rows made up of Boxes
-def render_map(app):
+def render_display(app):
     # Loop through each pixel in the display
     rows = list()
     for y in range(DISPLAY_HEIGHT):
+        osy = y*OVERSAMPLE
         row = list()
-        next_iter = -1
+        next_color = ""
         run_length = 0
 
         for x in range(DISPLAY_WIDTH):
-            iter = get_pixel(app, x, y)
-            if iter == -1:
-                print("Unresolved pixel at", x, y)
-                iter = MAX_ITER
+            osx = x*OVERSAMPLE
+            
+            # Super sample this sheeit
+            samples = []
+            for offy in range(OVERSAMPLE):
+                for offx in range(OVERSAMPLE):  
+                    iter = get_pixel(app, osx + offx , osy + offy)
+                    if iter == -1:
+                        print("Unresolved pixel at", x, y)            
+                        iter = MAX_ITER
+                    samples.append(iter)
+
+            rgbs = []
+            for sample in samples:
+                rgbs.append(get_gradient_rgb(app, sample))
+
+            color = blend_rgbs(*rgbs)
+            
+            # iter = get_pixel(app, osx, osy)
+            # color = get_gradient_color(app, iter)
 
             # Add a 1x1 box with the appropriate color to the row        
-            if next_iter == -1: # First color of row
+            if next_color == "": # First color of row
                 run_length = 1
-                next_iter = iter
-            elif iter == next_iter: # Color run detected
+                next_color = color
+            elif color == next_color: # Color run detected
                 run_length += 1
             else: # Color change
-                if run_length == 1 and next_iter == MAX_ITER:
-                    row.append(BLACK_PIXEL)
-                else:
-                    color = get_gradient_color(app, next_iter)
-                    row.append(render.Box(width=run_length, height=1, color=color))
+                addBox(row, run_length, next_color)
                 run_length = 1
-                next_iter = iter
-
-        # Add last box
-        if run_length == 1 and next_iter == MAX_ITER:
-            row.append(BLACK_PIXEL)
-        else:
-            color = get_gradient_color(app, next_iter)
-            row.append(render.Box(width=run_length, height=1, color=color))
+                next_color = color
 
         # Add the row to the grid
+        addBox(row, run_length, color) # Add last box for row
         rows.append(render.Row(children = row))
 
     return render.Column(
         children = rows,
     )
+
+def addBox(row, run_length, color):
+    if run_length == 1 and color == BLACK_PIXEL:
+        row.append(BLACK_PIXEL)
+    else:
+        row.append(render.Box(width=run_length, height=1, color=color))
 
