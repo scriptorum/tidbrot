@@ -11,9 +11,9 @@ load("time.star", "time")
 load("math.star", "math")
 
 ZOOM_GROWTH = 1.06
-FRAME_DURATION_MS = 80
+FRAME_DURATION_MS = 150
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 10
+MIN_ITER = 20
 ZOOM_TO_ITER = 1
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)
 BLACK_COLOR = "#000000"
@@ -27,18 +27,19 @@ MAX_ITER = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FR
 NUM_GRADIENT_STEPS = 32
 OPTIMIZE_MIN_ESC_DIFF = 1
 OPTIMIZE_MIN_ITER = 1000
-GRADIENT_SCALE_FACTOR = 2 # 3 # 2 # 1.75 # 1.55
+GRADIENT_SCALE_FACTOR = 1.85 # 2 # 3 # 2 # 1.75 # 1.55
 BOUNDARY_THRESHOLD = 20
 DISPLAY_WIDTH = 64
 DISPLAY_HEIGHT = 32
-OVERSAMPLE = 1
-OVERSAMPLE_WIDTH = DISPLAY_WIDTH * OVERSAMPLE
-OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE
+OVERSAMPLE_RANGE = 2
+OVERSAMPLE_MULTIPLIER = 1
+OVERSAMPLE_WIDTH = DISPLAY_WIDTH + 1
+OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT + 1
 MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1
 MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1
 
 def main(config):
-    random.seed(1)
+    random.seed(0)
     app = {"config": config}
 
     # Generate the animation with all frames
@@ -207,17 +208,21 @@ def get_gradient_rgb(app, iter):
     return (r, g, b)
 
 def blend_rgbs(*rgbs):
-    length = len(rgbs)
-    if length == 1:
-        return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
     
     tr,tg,tb = 0, 0, 0
-    for i in range(0, length - 1):
+    count = 0
+    for i in range(0, len(rgbs) - 1):
         r,g,b = rgbs[i]
-        tr += r
-        tg += g
-        tb += b
-    return rgb_to_hex(int(tr/length), int(tg/length), int(tb/length))
+        if r+g+b > 0:
+            tr += r
+            tg += g
+            tb += b
+            count += 1
+
+    if count == 0:
+        return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
+
+    return rgb_to_hex(int(tr/count), int(tg/count), int(tb/count))
 
 def random_color_tuple():
     return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
@@ -322,10 +327,10 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
     # print("render_mandelbrot_area:", pix, set, iter_limit, "dp:", dxp, dyp, "dm:", dxm, dym)
 
     # No optimization render area:    
-    # for y in range(pix['y1'], pix['y2'] + 1):
-    #     for x in range(pix['x1'], pix['x2'] + 1):
-    #         cache_pixel(app, x, y, dxm * float(x) + set['x1'], dym * float(y) + set['y1'], iter_limit)
-    # return
+    for y in range(pix['y1'], pix['y2'] + 1):
+        for x in range(pix['x1'], pix['x2'] + 1):
+            cache_pixel(app, x, y, dxm * float(x) + set['x1'], dym * float(y) + set['y1'], iter_limit)
+    return
 
     # A border with the same iterations can be filled with the same color
     match = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
@@ -429,18 +434,18 @@ def render_display(app):
     # Loop through each pixel in the display
     rows = list()
     for y in range(DISPLAY_HEIGHT):
-        osy = y*OVERSAMPLE
+        osy = y*OVERSAMPLE_MULTIPLIER
         row = list()
         next_color = ""
         run_length = 0
 
         for x in range(DISPLAY_WIDTH):
-            osx = x*OVERSAMPLE
+            osx = x*OVERSAMPLE_MULTIPLIER
             
             # Super sample this sheeit
             samples = []
-            for offy in range(OVERSAMPLE):
-                for offx in range(OVERSAMPLE):  
+            for offy in range(OVERSAMPLE_RANGE):
+                for offx in range(OVERSAMPLE_RANGE):  
                     iter = get_pixel(app, osx + offx , osy + offy)
                     if iter == -1:
                         print("Unresolved pixel at", x, y)            
