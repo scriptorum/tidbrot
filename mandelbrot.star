@@ -1,45 +1,48 @@
 #
 # TODO
 # - Expose some optimization controls 
-# - Verify get_cached_pixel isn't recalculating color
-# - Introduce natural log * 1.55 scaling for color gradient
-# - Does it make sense to come up with a point map, so I don't have to keep calculating mandelbrot coords at each zoom level?
 # 
+
 load("random.star", "random")
 load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-ZOOM_GROWTH = 1.06
-FRAME_DURATION_MS = 150
-MAX_FRAMES = int(15000 / FRAME_DURATION_MS)
-MIN_ITER = 20
-ZOOM_TO_ITER = 1
-MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)
-BLACK_COLOR = "#000000"
-ESCAPE_THRESHOLD = 4.0
-MAX_INT = int(math.pow(2, 53))
-CTRX, CTRY, MINX, MINY, MAXX, MAXY = -0.75, 0, -2.5, -0.875, 1.0, 0.8753
-POI_ZOOM_GROWTH = ZOOM_GROWTH
-POI_ZOOM_DEPTH = MAX_FRAMES #26 #int(math.pow(MAX_ZOOM, 1/POI_ZOOM_GROWTH))  # int(MAX_FRAMES / FRAME_DURATION)
-BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)
-MAX_ITER = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)
-NUM_GRADIENT_STEPS = 32
-OPTIMIZE_MIN_ESC_DIFF = 1
-OPTIMIZE_MIN_ITER = 1000
-GRADIENT_SCALE_FACTOR = 1.85 # 2 # 3 # 2 # 1.75 # 1.55
-BOUNDARY_THRESHOLD = 20
-DISPLAY_WIDTH = 64
-DISPLAY_HEIGHT = 32
-OVERSAMPLE_RANGE = 2
-OVERSAMPLE_MULTIPLIER = 1
-OVERSAMPLE_WIDTH = DISPLAY_WIDTH + 1
-OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT + 1
-MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1
-MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1
+INITIAL_POSITION = 0.5      # 0 = start at 0,0, 1=start at POI, otherwise = blended start
+TRANSLATE_PCT = 0.9         # 0=no movement, 0.9=adjust 10% towards target POI (only if INITIAL_POSITION < 1.0)
+INITIAL_ZOOM_LEVEL = 3      # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
+ZOOM_GROWTH = 1.04          # 1 = no zoom in, 1.1 = 10% zoom per frame
+FRAME_DURATION_MS = 150     # milliseconds per frame; for FPS, use value = 1000/fps
+MIN_ITER = 20               # minimum iterations, raise if initial zoom is > 1
+OVERSAMPLE_RANGE = 2        # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
+OVERSAMPLE_MULTIPLIER = 1   # 1 = no AA, 2 = 2AA (2x2=4X samples)
+OVERSAMPLE_OFFSET = 1       # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
+ESCAPE_THRESHOLD = 4.0      # 4.0 standard, less for faster calc, less accuracy
+ZOOM_TO_ITER = 0.9          # 1.0 standard, less for faster calc, less accuracy
+BOUNDARY_THRESHOLD = 20     # Used for boundary tracing, no idea
+DISPLAY_WIDTH = 64          # Tidbyt is 64 pixels wide
+DISPLAY_HEIGHT = 32         # Tidbyt is 32 pixels high
+NUM_GRADIENT_STEPS = 32     # Higher = more color variation
+GRADIENT_SCALE_FACTOR = 1.85# 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
+CTRX, CTRY = -0.75, 0       # -.75,0 = mandelbrot center
+MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753 # Bounds to use for mandelbrot set
+MAX_COLORS = 8                         # Max quantized channel values
+CHANNEL_MULT = 255.9999 / MAX_COLORS   # Conversion from quantized value to full range color channel (0-255)
+
+MAX_INT = int(math.pow(2, 53))                  # Estimate for Starlark max_int?
+MAX_FRAMES = int(15000 / FRAME_DURATION_MS)     # Calc total frames in animation
+MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)    # Calc max zoom
+MAX_ITER_CALC = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter
+MAX_ZOOM_CALC = float(MAX_ITER_CALC - MIN_ITER) / ZOOM_TO_ITER + INITIAL_ZOOM_LEVEL                 # Alt calc max zoom
+OVERSAMPLE_WIDTH  =  DISPLAY_WIDTH * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixels samples per row
+OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixel samples per column
+MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1              # Maximum sample for x
+MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1             # Maximum sample for y
+BLACK_COLOR = "#000000"                                         # Shorthand for black color
+BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    random.seed(0)
+    # random.seed(1)
     app = {"config": config}
 
     # Generate the animation with all frames
@@ -52,13 +55,16 @@ def main(config):
 def get_animation_frames(app):
     print("Determining point of interest")
     tx, ty = find_point_of_interest()   # Choose a point of interest    
+    
+    # Mandelbrot starts at center or over POI? Or somewhere in between
+    x = (tx * INITIAL_POSITION - CTRX * (1 - INITIAL_POSITION)) 
+    y = (ty * INITIAL_POSITION - CTRY * (1 - INITIAL_POSITION)) 
 
-    x, y = CTRX, CTRY                   # Mandelbrot starts centered
     frames = list()                     # List to store frames of the animation
 
     app['target'] = (tx, ty)
     app['gradient'] = get_random_gradient()
-    app['zoom_level'] = 1.0 # Initialize the zoom level
+    app['zoom_level'] = INITIAL_ZOOM_LEVEL # Initialize the zoom level
 
     # Generate multiple frames for animation
     print("Generating frames")
@@ -67,11 +73,12 @@ def get_animation_frames(app):
         frame = draw_mandelbrot(app, x, y)
         frames.append(frame)
         app['zoom_level'] *= ZOOM_GROWTH
-        x, y = (x * 0.9 + tx * 0.1), (y * 0.9 + ty * 0.1)
+        if TRANSLATE_PCT < 1.0 and TRANSLATE_PCT > 0 and INITIAL_POSITION != 1.0:
+            x, y = (x * TRANSLATE_PCT + tx * (1-TRANSLATE_PCT)), (y * TRANSLATE_PCT + ty * (1-TRANSLATE_PCT))
 
     actual_max_iter = int(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER)
-    print("Calculated max iterations:" + str(MAX_ITER) + " Actual:" + str(actual_max_iter))
-    print("Final zoom level:", app['zoom_level'])
+    print("Calculated max iterations:" + str(MAX_ITER_CALC) + " Actual:" + str(actual_max_iter))
+    print("Calculated max zoom:", MAX_ZOOM_CALC, " Actual:", app['zoom_level'])
 
     return frames
 
@@ -88,11 +95,11 @@ def float_range(start, end, num_steps, inclusive=False):
     return result
 
 def find_point_of_interest():
-    x, y, zoom, last_escape = CTRX, CTRY, 1, 0
-    for num in range(POI_ZOOM_DEPTH):
+    x, y, zoom, last_escape = CTRX, CTRY, INITIAL_ZOOM_LEVEL, 0
+    for num in range(MAX_FRAMES):
         x, y, last_escape = trace_boundary(x, y, zoom, num)
         print("Settled on POI " + str(x) + "," + str(y) + " with zoom " + str(zoom) + " esc: " + str(last_escape))
-        zoom *= POI_ZOOM_GROWTH
+        zoom *= ZOOM_GROWTH
     print("POI final zoom level:", zoom)
     return x, y
 
@@ -158,7 +165,7 @@ def mandelbrot_calc(x, y, iter_limit):
         zi = 2 * zr * zi + ci
         zr = zr2 - zi2 + cr
 
-    return MAX_ITER, dist
+    return MAX_ITER_CALC, dist
 
 def int_to_hex(n):
     if n > 255:
@@ -175,7 +182,7 @@ def get_gradient_color(app, iter):
     return rgb_to_hex(r, g, b)
 
 def get_gradient_rgb(app, iter):
-    if iter >= MAX_ITER or iter < 0:
+    if iter >= MAX_ITER_CALC or iter < 0:
         return (0,0,0)
     
     # Convert iterations to a color
@@ -207,25 +214,25 @@ def get_gradient_rgb(app, iter):
 
     return (r, g, b)
 
-def blend_rgbs(*rgbs):
-    
+# Blends RGB colors together
+# Also converts from quantized values to full color spectrum
+def blend_rgbs(*rgbs):    
     tr,tg,tb = 0, 0, 0
     count = 0
     for i in range(0, len(rgbs) - 1):
         r,g,b = rgbs[i]
-        if r+g+b > 0:
-            tr += r
-            tg += g
-            tb += b
-            count += 1
+        tr += r
+        tg += g
+        tb += b
+        count += 1
 
     if count == 0:
         return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
 
-    return rgb_to_hex(int(tr/count), int(tg/count), int(tb/count))
+    return rgb_to_hex(int(tr / count * CHANNEL_MULT), int(tg / count * CHANNEL_MULT), int(tb / count * CHANNEL_MULT))
 
 def random_color_tuple():
-    return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
+    return (random.number(0, MAX_COLORS), random.number(0, MAX_COLORS), random.number(0, MAX_COLORS))
 
 def get_random_gradient():
     print ("Generating gradient")
@@ -242,32 +249,10 @@ def alter_color_rgb(color):
     rnd_idx = (flip_idx + random.number(1,2)) % 3
     keep_idx = 3 - flip_idx - rnd_idx
     new_color = [0,0,0]
-    new_color[flip_idx] = 255 - color[flip_idx]
-    new_color[rnd_idx] = random.number(0, 255)
+    new_color[flip_idx] = MAX_COLORS - color[flip_idx]
+    new_color[rnd_idx] = random.number(0, MAX_COLORS)
     new_color[keep_idx] = color[keep_idx]
     return new_color
-
-def hsl_to_hex(h, s, l):
-    c = (1 - abs(2 * l - 1)) * s
-    x = c * (1 - abs((h / 60) % 2 - 1))
-    m = l - c / 2
-
-    if h < 60:
-        r, g, b = c, x, 0
-    elif h < 120:
-        r, g, b = x, c, 0
-    elif h < 180:
-        r, g, b = 0, c, x
-    elif h < 240:
-        r, g, b = 0, x, c
-    elif h < 300:
-        r, g, b = x, 0, c
-    else:
-        r, g, b = c, 0, x
-
-    r = int((r + m) * 255)
-    g = int((g + m) * 255)
-    b = int((b + m) * 255)
 
 # Renders a line
 # Returns the number of iterations found if they are all the same
@@ -327,10 +312,10 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
     # print("render_mandelbrot_area:", pix, set, iter_limit, "dp:", dxp, dyp, "dm:", dxm, dym)
 
     # No optimization render area:    
-    for y in range(pix['y1'], pix['y2'] + 1):
-        for x in range(pix['x1'], pix['x2'] + 1):
-            cache_pixel(app, x, y, dxm * float(x) + set['x1'], dym * float(y) + set['y1'], iter_limit)
-    return
+    # for y in range(pix['y1'], pix['y2'] + 1):
+    #     for x in range(pix['x1'], pix['x2'] + 1):
+    #         cache_pixel(app, x, y, dxm * float(x) + set['x1'], dym * float(y) + set['y1'], iter_limit)
+    # return
 
     # A border with the same iterations can be filled with the same color
     match = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
@@ -383,7 +368,7 @@ def cache_pixel(app, xp, yp, xm, ym, iter_limit):
         if stored_val != -1:
             print("RECALC for pixel " + str(xp) + "," + str(yp) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm) + "," + str(ym))
         if iter == iter_limit:
-            iter = MAX_ITER
+            iter = MAX_ITER_CALC
 
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
 
@@ -432,6 +417,7 @@ def draw_mandelbrot(app, x, y):
 # Converts a map to a Tidbyt Column made up of Rows made up of Boxes
 def render_display(app):
     # Loop through each pixel in the display
+    total_runs = 0
     rows = list()
     for y in range(DISPLAY_HEIGHT):
         osy = y*OVERSAMPLE_MULTIPLIER
@@ -447,9 +433,9 @@ def render_display(app):
             for offy in range(OVERSAMPLE_RANGE):
                 for offx in range(OVERSAMPLE_RANGE):  
                     iter = get_pixel(app, osx + offx , osy + offy)
-                    if iter == -1:
-                        print("Unresolved pixel at", x, y)            
-                        iter = MAX_ITER
+                    # if iter == -1:
+                    #     print("Unresolved pixel at", x, y)            
+                    #     iter = MAX_ITER_CALC
                     samples.append(iter)
 
             rgbs = []
@@ -469,12 +455,18 @@ def render_display(app):
                 run_length += 1
             else: # Color change
                 addBox(row, run_length, next_color)
+                total_runs += 1
                 run_length = 1
                 next_color = color
 
         # Add the row to the grid
         addBox(row, run_length, color) # Add last box for row
+        total_runs += 1
         rows.append(render.Row(children = row))
+
+    # pixel_count = DISPLAY_WIDTH * DISPLAY_HEIGHT
+    # compression = int((total_runs / pixel_count) * 10000) / 100.0
+    # print("Pixel count:", pixel_count, "Total runs:", total_runs, "Compression:", str(compression) + "%")
 
     return render.Column(
         children = rows,
