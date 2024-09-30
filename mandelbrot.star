@@ -1,6 +1,10 @@
 #
 # TODO
 # - Expose some optimization controls 
+# - Derive certain variables from a budgeting system
+#    + Measure the time used to find a POI
+#    + If not a lot of time, display a single frame with high AA
+#    + Otherwise do an animation
 # 
 
 load("random.star", "random")
@@ -8,8 +12,8 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-INITIAL_POSITION = 0.5      # 0 = start at 0,0, 1=start at POI, otherwise = blended start
-TRANSLATE_PCT = 0.9         # 0=no movement, 0.9=adjust 10% towards target POI (only if INITIAL_POSITION < 1.0)
+INITIAL_POSITION = 1.0      # 0 = start at 0,0, 1=start at POI, otherwise = blended start
+TRANSLATE_PCT = 0.0         # 0=no movement, 0.9=adjust 10% towards target POI (only if INITIAL_POSITION < 1.0)
 INITIAL_ZOOM_LEVEL = 3      # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
 ZOOM_GROWTH = 1.04          # 1 = no zoom in, 1.1 = 10% zoom per frame
 FRAME_DURATION_MS = 150     # milliseconds per frame; for FPS, use value = 1000/fps
@@ -28,6 +32,7 @@ CTRX, CTRY = -0.75, 0       # -.75,0 = mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753 # Bounds to use for mandelbrot set
 MAX_COLORS = 8                         # Max quantized channel values
 CHANNEL_MULT = 255.9999 / MAX_COLORS   # Conversion from quantized value to full range color channel (0-255)
+MAX_POI_SAMPLES = 100000
 
 MAX_INT = int(math.pow(2, 53))                  # Estimate for Starlark max_int?
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)     # Calc total frames in animation
@@ -95,49 +100,21 @@ def float_range(start, end, num_steps, inclusive=False):
     return result
 
 def find_point_of_interest():
-    x, y, zoom, last_escape = CTRX, CTRY, INITIAL_ZOOM_LEVEL, 0
-    for num in range(MAX_FRAMES):
-        x, y, last_escape = trace_boundary(x, y, zoom, num)
-        print("Settled on POI " + str(x) + "," + str(y) + " with zoom " + str(zoom) + " esc: " + str(last_escape))
-        zoom *= ZOOM_GROWTH
-    print("POI final zoom level:", zoom)
+    x, y, best =  find_poi_near(CTRX, CTRY, 0.0, (MAXX-MINX), MAX_POI_SAMPLES, MAX_ITER_CALC)
+    print("Settled on POI:", x, y, "escape:", best)
     return x, y
 
-def trace_boundary(x, y, zoom_level, frame_num):
-    step = 1 / zoom_level
-    grid_size = 50  # Adjust grid size depending on zoom level or fixed value
-    points_of_interest = []
-    best_x, best_y, best_escape = x, y, 0
-    
-    for i in range(grid_size):
-        for j in range(grid_size):
-            # Sample points in the zoomed region
-            x_sample = x + i * step
-            y_sample = y + j * step
+def find_poi_near(x, y, esc, depth, num_samples, iter_limit):
+    bestx, besty, best_escape = x, y, esc
 
-            # Compute the escape distance at the current point
-            iter1, dist1 = mandelbrot_calc(x_sample, y_sample, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
+    for num in range(num_samples):
+        x, y = bestx + (rnd() - 0.5) * depth, besty + (rnd() - 0.5) * depth
+        iter, last_escape = mandelbrot_calc(x, y, iter_limit)
+        if last_escape < ESCAPE_THRESHOLD and last_escape > best_escape:
+            bestx, besty, best_escape = x, y, last_escape
 
-            # Check adjacent points for boundary detection
-            x_adjacent = x_sample + step
-            y_adjacent = y_sample + step
-            iter2, dist2 = mandelbrot_calc(x_adjacent, y_adjacent, int(MIN_ITER + zoom_level * ZOOM_TO_ITER))
-
-            # If there is a significant difference in escape distances, we found a boundary
-            if abs(iter1 - iter2) > BOUNDARY_THRESHOLD:
-                points_of_interest.append((x_sample, y_sample, dist1))
-
-                # Choose the point closest to the escape threshold (without exceeding it)
-                if dist1 > best_escape and dist1 < ESCAPE_THRESHOLD:
-                    best_x, best_y, best_escape = x_sample, y_sample, dist1
-
-    # If no boundary is found, return the current best point
-    if len(points_of_interest) == 0:
-        print("No boundary found at this level, returning best found POI")
-        return best_x, best_y, best_escape
-
-    return best_x, best_y, best_escape
-
+#    print("Best POI so far:", bestx, besty, "escape:", best_escape)
+    return bestx, besty, best_escape
 
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
