@@ -12,42 +12,44 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-INITIAL_POSITION = 1.0      # 0 = start at 0,0, 1=start at POI, otherwise = blended start
-TRANSLATE_PCT = 0.0         # 0=no movement, 0.9=adjust 10% towards target POI (only if INITIAL_POSITION < 1.0)
-INITIAL_ZOOM_LEVEL = 3      # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
-ZOOM_GROWTH = 1.04          # 1 = no zoom in, 1.1 = 10% zoom per frame
-FRAME_DURATION_MS = 150     # milliseconds per frame; for FPS, use value = 1000/fps
-MIN_ITER = 20               # minimum iterations, raise if initial zoom is > 1
-OVERSAMPLE_RANGE = 2        # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
-OVERSAMPLE_MULTIPLIER = 1   # 1 = no AA, 2 = 2AA (2x2=4X samples)
-OVERSAMPLE_OFFSET = 1       # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
-ESCAPE_THRESHOLD = 4.0      # 4.0 standard, less for faster calc, less accuracy
-ZOOM_TO_ITER = 0.9          # 1.0 standard, less for faster calc, less accuracy
-BOUNDARY_THRESHOLD = 20     # Used for boundary tracing, no idea
-DISPLAY_WIDTH = 64          # Tidbyt is 64 pixels wide
-DISPLAY_HEIGHT = 32         # Tidbyt is 32 pixels high
-NUM_GRADIENT_STEPS = 32     # Higher = more color variation
-GRADIENT_SCALE_FACTOR = 1.85# 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-CTRX, CTRY = -0.75, 0       # -.75,0 = mandelbrot center
-MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753 # Bounds to use for mandelbrot set
-MAX_COLORS = 8                         # Max quantized channel values
-CHANNEL_MULT = 255.9999 / MAX_COLORS   # Conversion from quantized value to full range color channel (0-255)
-MAX_POI_SAMPLES = 100000
+MAX_INT = int(math.pow(2, 53))                  # Guesstimate for Starlark max_int
+def rnd():
+    return float(random.number(0, MAX_INT)) / float (MAX_INT)
 
-MAX_INT = int(math.pow(2, 53))                  # Estimate for Starlark max_int?
-MAX_FRAMES = int(15000 / FRAME_DURATION_MS)     # Calc total frames in animation
-MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)    # Calc max zoom
+INITIAL_ZOOM_LEVEL = rnd()*5+1  # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
+ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
+FRAME_DURATION_MS = 150         # milliseconds per frame; for FPS, use value = 1000/fps
+MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
+OVERSAMPLE_RANGE = 1            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
+OVERSAMPLE_MULTIPLIER = 1       # 1 = no AA, 2 = 2AA (2x2=4X samples)
+OVERSAMPLE_OFFSET = 0           # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
+ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
+ZOOM_TO_ITER = 1.0              # 1.0 standard, less for faster calc, less accuracy
+DISPLAY_WIDTH = 64              # Tidbyt is 64 pixels wide
+DISPLAY_HEIGHT = 32             # Tidbyt is 32 pixels high
+NUM_GRADIENT_STEPS = 64         # Higher = more color variation
+GRADIENT_SCALE_FACTOR = 1.55    # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
+MAX_POI_SAMPLES = 100000        # Number of random points to check for POI-worthiness
+INITIAL_POSITION = 1.0          # 0 = start at 0,0, 1=start at POI, otherwise = blended start
+TRANSLATE_PCT = 0.0             # 0=no movement, 0.9=adjust 10% towards target POI (only if INITIAL_POSITION < 1.0)
+CTRX, CTRY = -0.75, 0           # mandelbrot center
+MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
+MAX_COLORS = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
+CHANNEL_MULT = 255.9999 / MAX_COLORS                # Conversion from quantized value to full range color channel (0-255)
+
+MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
+MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
 MAX_ITER_CALC = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter
 MAX_ZOOM_CALC = float(MAX_ITER_CALC - MIN_ITER) / ZOOM_TO_ITER + INITIAL_ZOOM_LEVEL                 # Alt calc max zoom
 OVERSAMPLE_WIDTH  =  DISPLAY_WIDTH * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixels samples per row
 OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixel samples per column
-MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1              # Maximum sample for x
-MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1             # Maximum sample for y
-BLACK_COLOR = "#000000"                                         # Shorthand for black color
-BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)  # Pregenerated 1x1 pixel black box
+MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1                  # Maximum sample for x
+MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1                 # Maximum sample for y
+BLACK_COLOR = "#000000"                             # Shorthand for black color
+BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    # random.seed(1)
+    random.seed(1)
     app = {"config": config}
 
     # Generate the animation with all frames
@@ -86,9 +88,6 @@ def get_animation_frames(app):
     print("Calculated max zoom:", MAX_ZOOM_CALC, " Actual:", app['zoom_level'])
 
     return frames
-
-def rnd():
-    return float(random.number(0, MAX_INT)) / float (MAX_INT)
 
 def float_range(start, end, num_steps, inclusive=False):
     step_size = (float(end) - float(start)) / num_steps
@@ -163,9 +162,7 @@ def get_gradient_rgb(app, iter):
         return (0,0,0)
     
     # Convert iterations to a color
-    # t = math.log(iter, 2) / NUM_GRADIENT_STEPS % 1.0
     t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / NUM_GRADIENT_STEPS) % 1.0
-    #print("t:", t, "iter:", iter)
 
     # Number of keyframes
     num_keyframes = len(app['gradient']) - 1
@@ -183,7 +180,11 @@ def get_gradient_rgb(app, iter):
     # Get the colors of the two keyframes to blend between
     color_start = app['gradient'][lower_frame]
     color_end = app['gradient'][upper_frame]
-    
+
+    # if local_t < 0.5:
+    #     return app['gradient'][lower_frame]
+    # return app['gradient'][upper_frame]
+
     # Perform linear interpolation (LERP) between the two colors
     r = int(color_start[0] + local_t * (color_end[0] - color_start[0]))
     g = int(color_start[1] + local_t * (color_end[1] - color_start[1]))
@@ -405,21 +406,27 @@ def render_display(app):
         for x in range(DISPLAY_WIDTH):
             osx = x*OVERSAMPLE_MULTIPLIER
             
+            if DISPLAY_WIDTH == OVERSAMPLE_WIDTH:
+                iter = get_pixel(app, osx , osy)
+                rgb = get_gradient_rgb(app, iter)
+                color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
+
             # Super sample this sheeit
-            samples = []
-            for offy in range(OVERSAMPLE_RANGE):
-                for offx in range(OVERSAMPLE_RANGE):  
-                    iter = get_pixel(app, osx + offx , osy + offy)
-                    # if iter == -1:
-                    #     print("Unresolved pixel at", x, y)            
-                    #     iter = MAX_ITER_CALC
-                    samples.append(iter)
+            else:
+                samples = []
+                for offy in range(OVERSAMPLE_RANGE):
+                    for offx in range(OVERSAMPLE_RANGE):  
+                        iter = get_pixel(app, osx + offx , osy + offy)
+                        # if iter == -1:
+                        #     print("Unresolved pixel at", x, y)            
+                        #     iter = MAX_ITER_CALC
+                        samples.append(iter)
 
-            rgbs = []
-            for sample in samples:
-                rgbs.append(get_gradient_rgb(app, sample))
+                rgbs = []
+                for sample in samples:
+                    rgbs.append(get_gradient_rgb(app, sample))
 
-            color = blend_rgbs(*rgbs)
+                color = blend_rgbs(*rgbs)
             
             # iter = get_pixel(app, osx, osy)
             # color = get_gradient_color(app, iter)
