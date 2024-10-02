@@ -124,7 +124,13 @@ def map_range(v, min1, max1, min2, max2):
 # Returns both the escape distance and the number of iterations 
 # (cannot exceed iter_limit)
 def mandelbrot_calc(x, y, iter_limit):
-    zr, zi, cr, ci = 0.0, 0.0, x, y
+    (iter, dist, _, _) = mandelbrot_calc_from(0, 0, x, y, iter_limit)
+    return iter, dist
+
+# Core mandelbrot calculation
+# Supports starting from a zr/zi point other than 0
+def mandelbrot_calc_from(zr, zi, x, y, iter_limit):
+    cr, ci = x, y
 
     dist = 0
     for iter in range(1, iter_limit + 1):
@@ -135,13 +141,13 @@ def mandelbrot_calc(x, y, iter_limit):
         # Check if the point has escaped (this should happen after both zr and zi are updated)
         dist = zr2 + zi2
         if dist > ESCAPE_THRESHOLD:
-            return iter, dist
+            return iter, dist, zr, zi
 
         # Perform z = z^2 + c
         zi = 2 * zr * zi + ci
         zr = zr2 - zi2 + cr
 
-    return MAX_ITER_CALC, dist
+    return MAX_ITER_CALC, dist, zr, zi
 
 def int_to_hex(n):
     if n > 255:
@@ -252,6 +258,7 @@ def render_line_opt(app, match_iter, pix, set, max_iter):
     # Initialize xp, yp and xm, ym for iteration
     xp, yp = pix['x1'], pix['y1']
     xm, ym = set['x1'], set['y1']
+    zr, zi = 0.0, 0.0
 
     for val in range(start, end + 1):        
         # Update xm and ym based on whether it's vertical or horizontal
@@ -263,17 +270,17 @@ def render_line_opt(app, match_iter, pix, set, max_iter):
             xp = val  # Update xp in horizontal case
 
         # Get the pixel iteration count
-        cache = cache_pixel(app, xp, yp, xm, ym, max_iter)
+        cache, zr, zi = cache_pixel(app, xp, yp, xm, ym, max_iter)
 
         # Initialize match_iter on first iteration
         if match_iter == -1:
             match_iter = cache
 
         elif match_iter != cache:
-            return False
+            return False, zr, zi
         
     # All iterations along the line were identical
-    return match_iter
+    return match_iter, zr, zi
 
 def alt(obj, field, value):
     # Create a shallow copy manually
@@ -296,19 +303,19 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
     # return
 
     # A border with the same iterations can be filled with the same color
-    match = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
+    match, zr, zi = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
     if match != False:
-        match = render_line_opt(app, match, alt(pix, 'y1', pix['y2']), alt(set, 'y1', set['y2']), iter_limit)
+        match, zr, zi = render_line_opt(app, match, alt(pix, 'y1', pix['y2']), alt(set, 'y1', set['y2']), iter_limit)
     if match != False:
-        match = render_line_opt(app, match, alt(pix, 'x2', pix['x1']), alt(set, 'x2', set['x1']), iter_limit)
+        match, zr, zi = render_line_opt(app, match, alt(pix, 'x2', pix['x1']), alt(set, 'x2', set['x1']), iter_limit)
     if match != False:
-        match = render_line_opt(app, match, alt(pix, 'x1', pix['x2']), alt(set, 'x1', pix['x2']), iter_limit)
+        match, zr, zi = render_line_opt(app, match, alt(pix, 'x1', pix['x2']), alt(set, 'x1', pix['x2']), iter_limit)
 
     if match != False:
         # print("Flooding filling region:", pix, " with iter:", match1)
         for y in range(pix['y1'], pix['y2'] + 1):
             for x in range(pix['x1'], pix['x2'] + 1):
-                set_pixel(app, x, y, match)
+                set_pixel(app, x, y, match, zr, zi)
 
     # Subdivide further
     else:
@@ -340,9 +347,9 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
 # Calculates the number of iterations for a point on the map and returns it
 # If value is unavailable, it calculates it now
 def cache_pixel(app, xp, yp, xm, ym, iter_limit):
-    stored_val = get_pixel(app, xp, yp)
+    stored_val, zr, zi = get_pixel(app, xp, yp)
     if stored_val == -1:
-        iter, esc = mandelbrot_calc(xm, ym, iter_limit)
+        iter, esc, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
         if stored_val != -1:
             print("RECALC for pixel " + str(xp) + "," + str(yp) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm) + "," + str(ym))
         if iter == iter_limit:
@@ -350,15 +357,15 @@ def cache_pixel(app, xp, yp, xm, ym, iter_limit):
 
         # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
 
-        set_pixel(app, xp, yp, iter)
-        return iter
-    return stored_val
+        set_pixel(app, xp, yp, iter, zr, zi)
+        return iter, zr, zi
+    return stored_val, zr, zi
 
 # Set the number of iterations for a point on the map
-def set_pixel(app, xp, yp, value):
+def set_pixel(app, xp, yp, value, zr, zi):
     if xp < 0 or xp >= OVERSAMPLE_WIDTH or yp < 0 or yp >= OVERSAMPLE_HEIGHT:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
-    app['map'][yp][xp] = value
+    app['map'][yp][xp] = (value, zr, zi)
 
 # Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
@@ -372,7 +379,7 @@ def create_empty_map():
     for y in range(OVERSAMPLE_HEIGHT):
         row = list()
         for x in range(OVERSAMPLE_WIDTH):
-            row.append(int(-1))
+            row.append((int(-1), 0.0, 0.0))
         map.append(row)    
     return map
 
@@ -388,7 +395,9 @@ def draw_mandelbrot(app, x, y):
     # Create the map
     pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
-    app['map'] = create_empty_map()    
+    if 'map' in app:
+        app['last_map'] = app["map"]
+    app['map'] = create_empty_map()
     render_mandelbrot_area(app, pix, set, iterations)
     return render_display(app)
 
@@ -407,7 +416,7 @@ def render_display(app):
             osx = x*OVERSAMPLE_MULTIPLIER
             
             if DISPLAY_WIDTH == OVERSAMPLE_WIDTH:
-                iter = get_pixel(app, osx , osy)
+                iter, zr, zi = get_pixel(app, osx , osy)
                 rgb = get_gradient_rgb(app, iter)
                 color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
 
@@ -416,7 +425,7 @@ def render_display(app):
                 samples = []
                 for offy in range(OVERSAMPLE_RANGE):
                     for offx in range(OVERSAMPLE_RANGE):  
-                        iter = get_pixel(app, osx + offx , osy + offy)
+                        iter, zr, zi = get_pixel(app, osx + offx , osy + offy)
                         # if iter == -1:
                         #     print("Unresolved pixel at", x, y)            
                         #     iter = MAX_ITER_CALC
