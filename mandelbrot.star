@@ -12,11 +12,6 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 
-MAX_INT = int(math.pow(2, 53))                  # Guesstimate for Starlark max_int
-def rnd():
-    return float(random.number(0, MAX_INT)) / float (MAX_INT)
-
-INITIAL_ZOOM_LEVEL = rnd()*5+1  # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
 ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
 FRAME_DURATION_MS = 150         # milliseconds per frame; for FPS, use value = 1000/fps
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
@@ -40,17 +35,20 @@ CHANNEL_MULT = 255.9999 / MAX_COLORS                # Conversion from quantized 
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
 MAX_ITER_CALC = int(math.round(MIN_ITER + ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter
-MAX_ZOOM_CALC = float(MAX_ITER_CALC - MIN_ITER) / ZOOM_TO_ITER + INITIAL_ZOOM_LEVEL                 # Alt calc max zoom
-OVERSAMPLE_WIDTH  =  DISPLAY_WIDTH * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixels samples per row
-OVERSAMPLE_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixel samples per column
-MAX_PIXEL_X = OVERSAMPLE_WIDTH - 1                  # Maximum sample for x
-MAX_PIXEL_Y = OVERSAMPLE_HEIGHT - 1                 # Maximum sample for y
+MAP_WIDTH  =  DISPLAY_WIDTH * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixels samples per row
+MAP_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixel samples per column
+MAX_PIXEL_X = MAP_WIDTH - 1                  # Maximum sample for x
+MAX_PIXEL_Y = MAP_HEIGHT - 1                 # Maximum sample for y
 BLACK_COLOR = "#000000"                             # Shorthand for black color
+MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
     random.seed(1)
     app = {"config": config}
+    # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", MAP_WIDTH, MAP_HEIGHT, "MaxPixel:", MAX_PIXEL_X, MAX_PIXEL_Y)
+
+    # MAX_ZOOM_CALC = float(MAX_ITER_CALC - MIN_ITER) / ZOOM_TO_ITER + INITIAL_ZOOM_LEVEL                 # Alt calc max zoom
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
@@ -71,21 +69,20 @@ def get_animation_frames(app):
 
     app['target'] = (tx, ty)
     app['gradient'] = get_random_gradient()
-    app['zoom_level'] = INITIAL_ZOOM_LEVEL # Initialize the zoom level
+    app['zoom_level'] = rnd()*5+1  # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
 
     # Generate multiple frames for animation
     print("Generating frames")
     for frame in range(MAX_FRAMES):
-        print("Generating frame #" + str(frame))
+        print("Generating frame #" + str(frame), " zoom:", app['zoom_level'])
         frame = draw_mandelbrot(app, x, y)
         frames.append(frame)
         app['zoom_level'] *= ZOOM_GROWTH
-        if TRANSLATE_PCT < 1.0 and TRANSLATE_PCT > 0 and INITIAL_POSITION != 1.0:
-            x, y = (x * TRANSLATE_PCT + tx * (1-TRANSLATE_PCT)), (y * TRANSLATE_PCT + ty * (1-TRANSLATE_PCT))
+        # if TRANSLATE_PCT < 1.0 and TRANSLATE_PCT > 0 and INITIAL_POSITION != 1.0:
+        #     x, y = (x * TRANSLATE_PCT + tx * (1-TRANSLATE_PCT)), (y * TRANSLATE_PCT + ty * (1-TRANSLATE_PCT))
 
     actual_max_iter = int(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(MAX_ITER_CALC) + " Actual:" + str(actual_max_iter))
-    print("Calculated max zoom:", MAX_ZOOM_CALC, " Actual:", app['zoom_level'])
 
     return frames
 
@@ -141,13 +138,13 @@ def mandelbrot_calc_from(zr, zi, x, y, iter_limit):
         # Check if the point has escaped (this should happen after both zr and zi are updated)
         dist = zr2 + zi2
         if dist > ESCAPE_THRESHOLD:
-            return iter, dist, zr, zi
+            return (iter, dist, zr, zi)
 
         # Perform z = z^2 + c
         zi = 2 * zr * zi + ci
         zr = zr2 - zi2 + cr
 
-    return MAX_ITER_CALC, dist, zr, zi
+    return (MAX_ITER_CALC, dist, zr, zi)
 
 def int_to_hex(n):
     if n > 255:
@@ -243,8 +240,8 @@ def alter_color_rgb(color):
 # If match_iter is passed something other than False, then it will
 # compare all iterations against this value
 # Returns the number of iterations, or False if they are not all the same
-def render_line_opt(app, match_iter, pix, set, max_iter):
-    # print("render_line_opt match_iter:", match_iter, "pix:", pix, "set:", set, "max_iter:", max_iter)
+def generate_line_opt(app, match_iter, pix, set, max_iter):
+    # print("generate_line_opt match_iter:", match_iter, "pix:", pix, "set:", set, "max_iter:", max_iter)
     
     # Determine whether the line is vertical or horizontal
     is_vertical = pix['x1'] == pix['x2']
@@ -270,7 +267,7 @@ def render_line_opt(app, match_iter, pix, set, max_iter):
             xp = val  # Update xp in horizontal case
 
         # Get the pixel iteration count
-        cache, zr, zi = cache_pixel(app, xp, yp, xm, ym, max_iter)
+        cache, zr, zi = generate_pixel(app, xp, yp, xm, ym, max_iter)
 
         # Initialize match_iter on first iteration
         if match_iter == -1:
@@ -291,10 +288,10 @@ def alt(obj, field, value):
     return c
 
 
-def render_mandelbrot_area(app, pix, set, iter_limit):
+def generate_mandelbrot_area(app, pix, set, iter_limit):
     dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
     dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
-    # print("render_mandelbrot_area:", pix, set, iter_limit, "dp:", dxp, dyp, "dm:", dxm, dym)
+    # print("generate_mandelbrot_area:", pix, set, iter_limit, "dp:", dxp, dyp, "dm:", dxm, dym)
 
     # No optimization render area:    
     # for y in range(pix['y1'], pix['y2'] + 1):
@@ -303,13 +300,13 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
     # return
 
     # A border with the same iterations can be filled with the same color
-    match, zr, zi = render_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
+    match, zr, zi = generate_line_opt(app, False, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
     if match != False:
-        match, zr, zi = render_line_opt(app, match, alt(pix, 'y1', pix['y2']), alt(set, 'y1', set['y2']), iter_limit)
+        match, zr, zi = generate_line_opt(app, match, alt(pix, 'y1', pix['y2']), alt(set, 'y1', set['y2']), iter_limit)
     if match != False:
-        match, zr, zi = render_line_opt(app, match, alt(pix, 'x2', pix['x1']), alt(set, 'x2', set['x1']), iter_limit)
+        match, zr, zi = generate_line_opt(app, match, alt(pix, 'x2', pix['x1']), alt(set, 'x2', set['x1']), iter_limit)
     if match != False:
-        match, zr, zi = render_line_opt(app, match, alt(pix, 'x1', pix['x2']), alt(set, 'x1', pix['x2']), iter_limit)
+        match, zr, zi = generate_line_opt(app, match, alt(pix, 'x1', pix['x2']), alt(set, 'x1', pix['x2']), iter_limit)
 
     if match != False:
         # print("Flooding filling region:", pix, " with iter:", match1)
@@ -326,8 +323,8 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
             sxp_right = sxp_left + 1
             sxm_left = set['x1'] + splitxp * dxm
             sxm_right = set['x1'] + (splitxp + 1) * dxm
-            render_mandelbrot_area(app, alt(pix, 'x2', sxp_left),  alt(set, 'x2', sxm_left),  iter_limit)
-            render_mandelbrot_area(app, alt(pix, 'x1', sxp_right), alt(set, 'x1', sxm_right), iter_limit)
+            generate_mandelbrot_area(app, alt(pix, 'x2', sxp_left),  alt(set, 'x2', sxm_left),  iter_limit)
+            generate_mandelbrot_area(app, alt(pix, 'x1', sxp_right), alt(set, 'x1', sxm_right), iter_limit)
 
         elif dyp > 2 and dyp >= dxp:
             # Vertical split
@@ -336,49 +333,120 @@ def render_mandelbrot_area(app, pix, set, iter_limit):
             syp_below = syp_above + 1
             sym_above = set['y1'] + splityp * dym
             sym_below = set['y1'] + (splityp + 1) * dym
-            render_mandelbrot_area(app, alt(pix, 'y2', syp_above), alt(set, 'y2', sym_above), iter_limit)
-            render_mandelbrot_area(app, alt(pix, 'y1', syp_below), alt(set, 'y1', sym_below), iter_limit)
+            generate_mandelbrot_area(app, alt(pix, 'y2', syp_above), alt(set, 'y2', sym_above), iter_limit)
+            generate_mandelbrot_area(app, alt(pix, 'y1', syp_below), alt(set, 'y1', sym_below), iter_limit)
         else:
-            cache_pixel(app, pix['x1'], pix['y1'], set['x1'], set['y1'], iter_limit)
-            cache_pixel(app, pix['x1'], pix['y2'], set['x1'], set['y2'], iter_limit)
-            cache_pixel(app, pix['x2'], pix['y1'], set['x2'], set['y1'], iter_limit)
-            cache_pixel(app, pix['x2'], pix['y2'], set['x2'], set['y2'], iter_limit)
+            generate_pixel(app, pix['x1'], pix['y1'], set['x1'], set['y1'], iter_limit)
+            generate_pixel(app, pix['x1'], pix['y2'], set['x1'], set['y2'], iter_limit)
+            generate_pixel(app, pix['x2'], pix['y1'], set['x2'], set['y1'], iter_limit)
+            generate_pixel(app, pix['x2'], pix['y2'], set['x2'], set['y2'], iter_limit)
 
 # Calculates the number of iterations for a point on the map and returns it
-# If value is unavailable, it calculates it now
-def cache_pixel(app, xp, yp, xm, ym, iter_limit):
+# Tries to gather the pixel data from the cache if available
+def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     stored_val, zr, zi = get_pixel(app, xp, yp)
-    if stored_val == -1:
-        iter, esc, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
-        if stored_val != -1:
-            print("RECALC for pixel " + str(xp) + "," + str(yp) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm) + "," + str(ym))
+    if stored_val != -1:
+        return stored_val, zr, zi
+
+    # If this is the 2nd frame or later, reuse the old data to shorten iterations
+    if 'last_map' in app:
+        iter, _, zr, zi = mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit)
+
+    # Otherwise calculate the mandelbrot normally
+    else:
+        iter, _, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
+        # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
         if iter == iter_limit:
             iter = MAX_ITER_CALC
 
-        # print("Calc for pixel " + str(xp1) + "," + str(yp1) + " iter:" + str(iter) + " esc:" + str(esc) + " MB:" + str(xm1) + "," + str(ym1))
+    # Save pixel in map
+    set_pixel(app, xp, yp, iter, zr, zi)
 
-        set_pixel(app, xp, yp, iter, zr, zi)
-        return iter, zr, zi
-    return stored_val, zr, zi
+    return iter, zr, zi
+
+# Looks at the last map's four related pixels to determine the start value for a mandelbrot calc
+# Unfortunately this doesn't work well. :(
+def mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit):
+    x_prev = (xp - app['center'][0]) / ZOOM_GROWTH + app['last_center'][0]
+    y_prev = (yp - app['center'][1]) / ZOOM_GROWTH + app['last_center'][1]
+
+    ul_x = int(x_prev + 0.5)  # Add 0.5 to better handle rounding
+    ul_y = int(y_prev + 0.5)
+    lr_x = ul_x + 1
+    lr_y = ul_y + 1
+
+    # return mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
+
+    # Edges may not have all four pixels
+    if ul_x < 0 or lr_x > MAX_PIXEL_X or ul_y < 0 or lr_y > MAX_PIXEL_Y:
+        return mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
+    
+    # return MAX_ITER_CALC, 4, 4, 4    
+    # print("Zoom:", app['zoom_level'], "m:", xm, ym, "p:", xp, yp, "base:", x_base, y_base, "frac:", x_frac, y_frac, "prev:", x_prev, y_prev)
+
+    # Retrieve four neighboring pixels from the previous frame
+    iter_tl, zr_tl, zi_tl = app['last_map'][ul_y][ul_x]       # Top-left
+    iter_tr, zr_tr, zi_tr = app['last_map'][ul_y][lr_x]   # Top-right
+    iter_bl, zr_bl, zi_bl = app['last_map'][lr_y][ul_x]   # Bottom-left
+    iter_br, zr_br, zi_br = app['last_map'][lr_y][lr_x]  # Bottom-right
+
+    # Bilinear interpolation for zr and zi
+    x_frac = x_prev - float(ul_x)
+    y_frac = y_prev - float(ul_y)
+
+    # Interpolate zr and zi as before
+    zr = (
+        (1 - x_frac) * (1 - y_frac) * zr_tl +
+        x_frac * (1 - y_frac) * zr_tr +
+        (1 - x_frac) * y_frac * zr_bl +
+        x_frac * y_frac * zr_br
+    )
+    zi = (
+        (1 - x_frac) * (1 - y_frac) * zi_tl +
+        x_frac * (1 - y_frac) * zi_tr +
+        (1 - x_frac) * y_frac * zi_bl +
+        x_frac * y_frac * zi_br
+    )
+
+    zr /= 256.0 # /= ZOOM_GROWTH
+    zi /= 256.0
+    # iter_limit = int(iter_limit / ZOOM_GROWTH)
+    avg_iter = int((iter_tl + iter_tr + iter_bl + iter_br) / 4.0)
+    min_iter = max(iter_limit - avg_iter, MIN_ITER)
+
+
+    # print("Top-left (zr_tl, zi_tl):", zr_tl, zi_tl, "Iter:", iter_tl)
+    # print("Top-right (zr_tr, zi_tr):", zr_tr, zi_tr, "Iter:", iter_tr)
+    # print("Bottom-left (zr_bl, zi_bl):", zr_bl, zi_bl, "Iter:", iter_bl)
+    # print("Bottom-right (zr_br, zi_br):", zr_br, zi_br, "Iter:", iter_br)
+    # print("Interpolated (zr, zi):", zr, zi)
+
+    (final_iter, final_dist, final_zr, final_zi) = mandelbrot_calc_from(zr, zi, xm, ym, int(iter_limit / 2))
+
+    # print("Final iter:", final_iter, "dist:", final_dist, "zr:", final_zr, "zi:", final_zi)
+
+    return (final_iter, final_dist, final_zr, final_zi)
+
+    # return avg_limit, 0.0, zr, zi
 
 # Set the number of iterations for a point on the map
 def set_pixel(app, xp, yp, value, zr, zi):
-    if xp < 0 or xp >= OVERSAMPLE_WIDTH or yp < 0 or yp >= OVERSAMPLE_HEIGHT:
+    if xp < 0 or xp >= MAP_WIDTH or yp < 0 or yp >= MAP_HEIGHT:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     app['map'][yp][xp] = (value, zr, zi)
 
 # Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
-    if xp < 0 or xp >= OVERSAMPLE_WIDTH or yp < 0 or yp >= OVERSAMPLE_HEIGHT:
+    if xp < 0 or xp >= MAP_WIDTH or yp < 0 or yp >= MAP_HEIGHT:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     return app['map'][yp][xp]
 
 # A map contains either the escape value for that point or -1 (uninitialized)
 def create_empty_map(): 
     map = list()
-    for y in range(OVERSAMPLE_HEIGHT):
+    for y in range(MAP_HEIGHT):
         row = list()
-        for x in range(OVERSAMPLE_WIDTH):
+        for x in range(MAP_WIDTH):
             row.append((int(-1), 0.0, 0.0))
         map.append(row)    
     return map
@@ -393,12 +461,20 @@ def draw_mandelbrot(app, x, y):
     maxx, maxy  = x + half_width, y + half_height
 
     # Create the map
-    pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
-    set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     if 'map' in app:
         app['last_map'] = app["map"]
+        app['last_center'] = app['center']
+        app['last_zoom'] = app['zoom_level']
     app['map'] = create_empty_map()
-    render_mandelbrot_area(app, pix, set, iterations)
+    app['center'] = (x, y)
+    # print("Current center point:", x, y, "Iter:", iterations)
+
+    # Generate the map
+    pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
+    set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
+    generate_mandelbrot_area(app, pix, set, iterations)
+
+    # Render the map to the display
     return render_display(app)
 
 # Converts a map to a Tidbyt Column made up of Rows made up of Boxes
@@ -415,7 +491,7 @@ def render_display(app):
         for x in range(DISPLAY_WIDTH):
             osx = x*OVERSAMPLE_MULTIPLIER
             
-            if DISPLAY_WIDTH == OVERSAMPLE_WIDTH:
+            if DISPLAY_WIDTH == MAP_WIDTH:
                 iter, zr, zi = get_pixel(app, osx , osy)
                 rgb = get_gradient_rgb(app, iter)
                 color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
@@ -426,9 +502,6 @@ def render_display(app):
                 for offy in range(OVERSAMPLE_RANGE):
                     for offx in range(OVERSAMPLE_RANGE):  
                         iter, zr, zi = get_pixel(app, osx + offx , osy + offy)
-                        # if iter == -1:
-                        #     print("Unresolved pixel at", x, y)            
-                        #     iter = MAX_ITER_CALC
                         samples.append(iter)
 
                 rgbs = []
@@ -437,9 +510,6 @@ def render_display(app):
 
                 color = blend_rgbs(*rgbs)
             
-            # iter = get_pixel(app, osx, osy)
-            # color = get_gradient_color(app, iter)
-
             # Add a 1x1 box with the appropriate color to the row        
             if next_color == "": # First color of row
                 run_length = 1
@@ -470,4 +540,7 @@ def addBox(row, run_length, color):
         row.append(BLACK_PIXEL)
     else:
         row.append(render.Box(width=run_length, height=1, color=color))
+
+def rnd():
+    return float(random.number(0, MAX_INT)) / float (MAX_INT)
 
