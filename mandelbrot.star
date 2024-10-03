@@ -349,15 +349,15 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
         return stored_val, zr, zi
 
     # If this is the 2nd frame or later, reuse the old data to shorten iterations
-    if 'last_map' in app:
-        iter, _, zr, zi = mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit)
+    # if 'last_map' in app:
+    #     iter, _, zr, zi = mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit)
 
     # Otherwise calculate the mandelbrot normally
-    else:
-        iter, _, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
-        # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
-        if iter == iter_limit:
-            iter = MAX_ITER_CALC
+    # else:
+    iter, _, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
+    # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
+    if iter == iter_limit:
+        iter = MAX_ITER_CALC
 
     # Save pixel in map
     set_pixel(app, xp, yp, iter, zr, zi)
