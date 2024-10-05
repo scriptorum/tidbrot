@@ -44,7 +44,7 @@ MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark m
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    random.seed(1)
+    # random.seed(1)
     app = {"config": config}
     # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", MAP_WIDTH, MAP_HEIGHT, "MaxPixel:", MAX_PIXEL_X, MAX_PIXEL_Y)
 
@@ -348,13 +348,8 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     if stored_val != -1:
         return stored_val, zr, zi
 
-    # If this is the 2nd frame or later, reuse the old data to shorten iterations
-    # if 'last_map' in app:
-    #     iter, _, zr, zi = mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit)
-
-    # Otherwise calculate the mandelbrot normally
-    # else:
     iter, _, zr, zi = mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
+        
     # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
     if iter == iter_limit:
         iter = MAX_ITER_CALC
@@ -363,71 +358,6 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     set_pixel(app, xp, yp, iter, zr, zi)
 
     return iter, zr, zi
-
-# Looks at the last map's four related pixels to determine the start value for a mandelbrot calc
-# Unfortunately this doesn't work well. :(
-def mandelbrot_estimate(app, xp, yp, xm, ym, iter_limit):
-    x_prev = (xp - app['center'][0]) / ZOOM_GROWTH + app['last_center'][0]
-    y_prev = (yp - app['center'][1]) / ZOOM_GROWTH + app['last_center'][1]
-
-    ul_x = int(x_prev + 0.5)  # Add 0.5 to better handle rounding
-    ul_y = int(y_prev + 0.5)
-    lr_x = ul_x + 1
-    lr_y = ul_y + 1
-
-    # return mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
-
-    # Edges may not have all four pixels
-    if ul_x < 0 or lr_x > MAX_PIXEL_X or ul_y < 0 or lr_y > MAX_PIXEL_Y:
-        return mandelbrot_calc_from(0.0, 0.0, xm, ym, iter_limit)
-    
-    # return MAX_ITER_CALC, 4, 4, 4    
-    # print("Zoom:", app['zoom_level'], "m:", xm, ym, "p:", xp, yp, "base:", x_base, y_base, "frac:", x_frac, y_frac, "prev:", x_prev, y_prev)
-
-    # Retrieve four neighboring pixels from the previous frame
-    iter_tl, zr_tl, zi_tl = app['last_map'][ul_y][ul_x]       # Top-left
-    iter_tr, zr_tr, zi_tr = app['last_map'][ul_y][lr_x]   # Top-right
-    iter_bl, zr_bl, zi_bl = app['last_map'][lr_y][ul_x]   # Bottom-left
-    iter_br, zr_br, zi_br = app['last_map'][lr_y][lr_x]  # Bottom-right
-
-    # Bilinear interpolation for zr and zi
-    x_frac = x_prev - float(ul_x)
-    y_frac = y_prev - float(ul_y)
-
-    # Interpolate zr and zi as before
-    zr = (
-        (1 - x_frac) * (1 - y_frac) * zr_tl +
-        x_frac * (1 - y_frac) * zr_tr +
-        (1 - x_frac) * y_frac * zr_bl +
-        x_frac * y_frac * zr_br
-    )
-    zi = (
-        (1 - x_frac) * (1 - y_frac) * zi_tl +
-        x_frac * (1 - y_frac) * zi_tr +
-        (1 - x_frac) * y_frac * zi_bl +
-        x_frac * y_frac * zi_br
-    )
-
-    zr /= 256.0 # /= ZOOM_GROWTH
-    zi /= 256.0
-    # iter_limit = int(iter_limit / ZOOM_GROWTH)
-    avg_iter = int((iter_tl + iter_tr + iter_bl + iter_br) / 4.0)
-    min_iter = max(iter_limit - avg_iter, MIN_ITER)
-
-
-    # print("Top-left (zr_tl, zi_tl):", zr_tl, zi_tl, "Iter:", iter_tl)
-    # print("Top-right (zr_tr, zi_tr):", zr_tr, zi_tr, "Iter:", iter_tr)
-    # print("Bottom-left (zr_bl, zi_bl):", zr_bl, zi_bl, "Iter:", iter_bl)
-    # print("Bottom-right (zr_br, zi_br):", zr_br, zi_br, "Iter:", iter_br)
-    # print("Interpolated (zr, zi):", zr, zi)
-
-    (final_iter, final_dist, final_zr, final_zi) = mandelbrot_calc_from(zr, zi, xm, ym, int(iter_limit / 2))
-
-    # print("Final iter:", final_iter, "dist:", final_dist, "zr:", final_zr, "zi:", final_zi)
-
-    return (final_iter, final_dist, final_zr, final_zi)
-
-    # return avg_limit, 0.0, zr, zi
 
 # Set the number of iterations for a point on the map
 def set_pixel(app, xp, yp, value, zr, zi):
