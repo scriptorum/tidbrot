@@ -27,8 +27,8 @@ GRADIENT_SCALE_FACTOR = 1.55    # 1.55 = standard, less for more colors zoomed i
 MAX_POI_SAMPLES = 100000        # Number of random points to check for POI-worthiness
 CTRX, CTRY = -0.75, 0           # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
-MAX_COLORS = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
-CHANNEL_MULT = 255.9999 / MAX_COLORS                # Conversion from quantized value to full range color channel (0-255)
+MAX_COLOR_CHANNEL = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
+CHANNEL_MULT = 255.9999 / MAX_COLOR_CHANNEL                # Conversion from quantized value to full range color channel (0-255)
 
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
@@ -197,7 +197,7 @@ def blend_rgbs(*rgbs):
     return rgb_to_hex(int(tr / count * CHANNEL_MULT), int(tg / count * CHANNEL_MULT), int(tb / count * CHANNEL_MULT))
 
 def random_color_tuple():
-    return (random.number(0, MAX_COLORS), random.number(0, MAX_COLORS), random.number(0, MAX_COLORS))
+    return (random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL))
 
 def get_random_gradient():
     print ("Generating gradient")
@@ -214,8 +214,8 @@ def alter_color_rgb(color):
     rnd_idx = (flip_idx + random.number(1,2)) % 3
     keep_idx = 3 - flip_idx - rnd_idx
     new_color = [0,0,0]
-    new_color[flip_idx] = MAX_COLORS - color[flip_idx]
-    new_color[rnd_idx] = random.number(0, MAX_COLORS)
+    new_color[flip_idx] = MAX_COLOR_CHANNEL - color[flip_idx]
+    new_color[rnd_idx] = random.number(0, MAX_COLOR_CHANNEL)
     new_color[keep_idx] = color[keep_idx]
     return new_color
 
