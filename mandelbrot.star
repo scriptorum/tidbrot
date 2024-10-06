@@ -11,13 +11,12 @@ load("random.star", "random")
 load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
-load("quadtree.star", "qt_create", "qt_add", "qt_check_point", "qt_check_area", "qt_count", "qt_prune_outside")
 
-ZOOM_GROWTH = 1.02              # 1 = no zoom in, 1.1 = 10% zoom per frame
+ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
 FRAME_DURATION_MS = 150        # milliseconds per frame; for FPS, use value = 1000/fps
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
-OVERSAMPLE_RANGE = 1            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
-OVERSAMPLE_MULTIPLIER = 1       # 1 = no AA, 2 = 2AA (2x2=4X samples)
+OVERSAMPLE_RANGE = 2            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
+OVERSAMPLE_MULTIPLIER = 2       # 1 = no AA, 2 = 2AA (2x2=4X samples)
 OVERSAMPLE_OFFSET = 0           # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
 ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 0.75             # 1.0 standard, less for faster calc, less accuracy
@@ -30,7 +29,6 @@ CTRX, CTRY = -0.75, 0           # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 MAX_COLORS = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
 CHANNEL_MULT = 255.9999 / MAX_COLORS                # Conversion from quantized value to full range color channel (0-255)
-BASE_MIN_SIZE = 1e-6
 
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
@@ -43,7 +41,7 @@ MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark m
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    random.seed(4)
+    # random.seed(4)
     app = {"config": config}
     # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", MAP_WIDTH, MAP_HEIGHT, "MaxPixel:", MAX_PIXEL_X, MAX_PIXEL_Y)
 
@@ -59,7 +57,6 @@ def get_animation_frames(app):
     app['zoom_level'] = rnd()*5+1       # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
     app['max_iter'] = int(math.round(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter -- it's wrong, doesn't include initial zoom
     app['gradient'] = get_random_gradient()
-    app['qt'] = qt_create(MINX, MINY, MAXX, MAXY, max_depth=6)
 
     x, y = find_point_of_interest(app)  # Choose a point of interest    
     app['target'] = (x, y)
@@ -75,7 +72,6 @@ def get_animation_frames(app):
 
     actual_max_iter = int(MIN_ITER + app['zoom_level']/ZOOM_GROWTH * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(app['max_iter']) + " Actual:" + str(actual_max_iter))
-    print("Final exclusions:", qt_count(app['qt']))
 
     return frames
 
@@ -285,12 +281,6 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
     dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
     dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
 
-   # Check if the area is already precalculated before doing any work
-    iter = qt_check_area(app['qt'], set)
-    if iter:
-        flood_fill(app, pix, iter)
-        return
-
     # A border with the same iterations can be filled with the same color
     iter = generate_line_opt(app, -1, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
     if iter != False:
@@ -303,13 +293,9 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
         # print("Flooding filling region:", pix, " with iter:", iter)
         flood_fill(app, pix, iter)
 
-        # Add flood fills to an exclusion list
-        min_size = app['qt_min_size']
-        if dxm > min_size and dym > min_size:
-            qt_add(app['qt'], set, iter)
-
     # Cannot flood fill region
     else:
+
         # Perform vertical split
         if dyp >= 2 and dyp >= dxp:
             splityp = int(dyp / 2)
@@ -340,9 +326,6 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
                 generate_pixel(app, pix['x1'], pix['y2'], set['x1'], set['y2'], iter_limit)
                 generate_pixel(app, pix['x2'], pix['y1'], set['x2'], set['y1'], iter_limit)
                 generate_pixel(app, pix['x2'], pix['y2'], set['x2'], set['y2'], iter_limit)
-            # for y in range(pix['y1'], pix['y2'] + 1):
-            #     for x in range(pix['x1'], pix['x2'] + 1):                        
-            #         generate_pixel(app, x, y, set['x1'] + (dxm * pix['x1'] - x), set['y1'] + (dym * pix['y1'] - y), iter_limit)
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
@@ -351,14 +334,8 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     if stored_val != -1:
         return stored_val
     
-    # If pixel is covered by a previously excluded area, simply return the iterations for that area
-    excl = qt_check_point(app['qt'], xm, ym)
-    if excl:
-        iter = excl
-
-    # Otherwise do normal mandelbrot calculation
-    else:
-        iter, _ = mandelbrot_calc(app, xm, ym, iter_limit)
+    # Normal mandelbrot calculation
+    iter, _ = mandelbrot_calc(app, xm, ym, iter_limit)
         
     # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
     if iter == iter_limit:
@@ -409,8 +386,6 @@ def render_mandelbrot(app, x, y):
     pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     app['region'] = set
-    qt_prune_outside(app['qt'], set)
-    app['qt_min_size'] = calculate_min_size(app)
     generate_mandelbrot_area(app, pix, set, iterations)
 
     # Render the map to the display
@@ -482,12 +457,3 @@ def addBox(row, run_length, color):
 
 def rnd():
     return float(random.number(0, MAX_INT)) / float (MAX_INT)
-
-
-
-
-def calculate_min_size(app):
-    zoom_level = app['zoom_level']
-    # Dynamically adjust minimum width/height based on zoom level
-    # Higher zoom level -> smaller min width/height
-    return int(BASE_MIN_SIZE / zoom_level)
