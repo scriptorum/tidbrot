@@ -11,12 +11,13 @@ load("random.star", "random")
 load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
+load("quadtree.star", "qt_create", "qt_add", "qt_check_point", "qt_check_area", "qt_count", "qt_prune_outside")
 
 ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
-FRAME_DURATION_MS = 1500        # milliseconds per frame; for FPS, use value = 1000/fps
+FRAME_DURATION_MS = 150        # milliseconds per frame; for FPS, use value = 1000/fps
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
-OVERSAMPLE_RANGE = 2            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
-OVERSAMPLE_MULTIPLIER = 2       # 1 = no AA, 2 = 2AA (2x2=4X samples)
+OVERSAMPLE_RANGE = 1            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
+OVERSAMPLE_MULTIPLIER = 1       # 1 = no AA, 2 = 2AA (2x2=4X samples)
 OVERSAMPLE_OFFSET = 0           # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
 ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 0.75             # 1.0 standard, less for faster calc, less accuracy
@@ -57,7 +58,7 @@ def get_animation_frames(app):
     app['zoom_level'] = rnd()*5+1       # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
     app['max_iter'] = int(math.round(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter -- it's wrong, doesn't include initial zoom
     app['gradient'] = get_random_gradient()
-    app['exclusions'] = []
+    app['qt'] = qt_create(MINX, MINY, MAXX, MAXY, max_depth=6)
 
     x, y = find_point_of_interest(app)  # Choose a point of interest    
     app['target'] = (x, y)
@@ -73,7 +74,7 @@ def get_animation_frames(app):
 
     actual_max_iter = int(MIN_ITER + app['zoom_level']/ZOOM_GROWTH * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(app['max_iter']) + " Actual:" + str(actual_max_iter))
-    print("Final exclusions:", len(app['exclusions']))
+    print("Final exclusions:", qt_count(app['qt']))
 
     return frames
 
@@ -273,9 +274,18 @@ def alt(obj, field, value):
     c[field] = value 
     return c
 
+def flood_fill(app, area, iter):
+    for y in range(area['y1'], area['y2'] + 1):
+        for x in range(area['x1'], area['x2'] + 1):
+            set_pixel(app, x, y, iter)
+
 # Generates a specific subset area of the mandelbrot to the map 
 def generate_mandelbrot_area(app, pix, set, iter_limit):
-    dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
+   # Check if the area is already precalculated before doing any work
+    iter = qt_check_area(app['qt'], set)
+    if iter:
+        flood_fill(app, pix, iter)
+        return
 
     # A border with the same iterations can be filled with the same color
     iter = generate_line_opt(app, -1, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
@@ -287,16 +297,14 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
         iter = generate_line_opt(app, iter, alt(pix, 'x1', pix['x2']), alt(set, 'x1', set['x2']), iter_limit)
     if iter != False:
         # print("Flooding filling region:", pix, " with iter:", iter)
-        for y in range(pix['y1'], pix['y2'] + 1):
-            for x in range(pix['x1'], pix['x2'] + 1):
-                set_pixel(app, x, y, iter)
+        flood_fill(app, pix, iter)
 
         # Add flood fills to an exclusion list
-        if iter > 20:
-            add_exclusion(app, set, iter)
+        qt_add(app['qt'], set, iter)
 
     # Cannot flood fill region
     else:
+        dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
         dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
 
         # Perform vertical split
@@ -333,51 +341,6 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
             #     for x in range(pix['x1'], pix['x2'] + 1):                        
             #         generate_pixel(app, x, y, set['x1'] + (dxm * pix['x1'] - x), set['y1'] + (dym * pix['y1'] - y), iter_limit)
 
-# Returns 0 if the mandelbrot set point is not covered by a previously excluded 
-# area, otherwise returns the iterations associated with that area
-def area_excluded(app, x, y):
-    for exclusion in app['exclusions']:
-        area = exclusion['area']
-        if point_within_area(x, y, area):
-            return exclusion['iter']
-    return 0
-
-def area_within_area(area1, area2):
-    if point_within_area(area1['x1'], area1['y1'], area2) and point_within_area(area1['x2'], area1['y2'], area2):
-        return True
-    return False
-
-def area_overlaps_area(a1, a2):
-    if a1['x1'] >= a2['x2'] or a2['x1'] >= a1['x2'] or a1['y1'] >= a2['y2'] or a2['y1'] >= a1['y2']:
-        return False
-    return True
-
-# Returns True if the point is within the area provided
-def point_within_area(x, y, area):
-    return within_range(x, area['x1'], area['x2']) and within_range(y, area['y1'], area['y2'])
-
-# Returns true if the value is within the lower and upper bounds (inclusive)
-def within_range(value, lower, upper):
-    if upper < lower:
-        fail("Parameters passed in wrong order")
-    elif value >= lower and value <= upper:
-        return True
-    return False
-
-# Adds an area to the exclusion list
-def add_exclusion(app, set, iterations):
-    # Skip exclusions completely out of bounds
-    if not area_overlaps_area(set, app['region']):
-        fail("Area", set, "is out of bounds:", app['region'])
-
-    # Area already covered
-    for exclusion in app['exclusions']:
-        if area_within_area(set, exclusion['area']):
-            return
-
-    # New area
-    app['exclusions'].append({ "area":set, "iter": iterations })
-
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(app, xp, yp, xm, ym, iter_limit):
@@ -386,9 +349,9 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
         return stored_val
     
     # If pixel is covered by a previously excluded area, simply return the iterations for that area
-    ae = area_excluded(app, xm, ym)
-    if ae > 0:
-        iter = ae
+    excl = qt_check_point(app['qt'], xm, ym)
+    if excl:
+        iter = excl
 
     # Otherwise do normal mandelbrot calculation
     else:
@@ -443,6 +406,7 @@ def render_mandelbrot(app, x, y):
     pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     app['region'] = set
+    qt_prune_outside(app['qt'], set)
     generate_mandelbrot_area(app, pix, set, iterations)
 
     # Render the map to the display
