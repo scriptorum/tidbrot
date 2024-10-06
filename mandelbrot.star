@@ -13,7 +13,7 @@ load("time.star", "time")
 load("math.star", "math")
 load("quadtree.star", "qt_create", "qt_add", "qt_check_point", "qt_check_area", "qt_count", "qt_prune_outside")
 
-ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
+ZOOM_GROWTH = 1.02              # 1 = no zoom in, 1.1 = 10% zoom per frame
 FRAME_DURATION_MS = 150        # milliseconds per frame; for FPS, use value = 1000/fps
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
 OVERSAMPLE_RANGE = 1            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
@@ -30,6 +30,7 @@ CTRX, CTRY = -0.75, 0           # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 MAX_COLORS = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
 CHANNEL_MULT = 255.9999 / MAX_COLORS                # Conversion from quantized value to full range color channel (0-255)
+BASE_MIN_SIZE = 1e-6
 
 MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
 MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
@@ -281,6 +282,9 @@ def flood_fill(app, area, iter):
 
 # Generates a specific subset area of the mandelbrot to the map 
 def generate_mandelbrot_area(app, pix, set, iter_limit):
+    dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
+    dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
+
    # Check if the area is already precalculated before doing any work
     iter = qt_check_area(app['qt'], set)
     if iter:
@@ -300,13 +304,12 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
         flood_fill(app, pix, iter)
 
         # Add flood fills to an exclusion list
-        qt_add(app['qt'], set, iter)
+        min_size = app['qt_min_size']
+        if dxm > min_size and dym > min_size:
+            qt_add(app['qt'], set, iter)
 
     # Cannot flood fill region
     else:
-        dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
-        dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
-
         # Perform vertical split
         if dyp >= 2 and dyp >= dxp:
             splityp = int(dyp / 2)
@@ -407,6 +410,7 @@ def render_mandelbrot(app, x, y):
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     app['region'] = set
     qt_prune_outside(app['qt'], set)
+    app['qt_min_size'] = calculate_min_size(app)
     generate_mandelbrot_area(app, pix, set, iterations)
 
     # Render the map to the display
@@ -479,3 +483,11 @@ def addBox(row, run_length, color):
 def rnd():
     return float(random.number(0, MAX_INT)) / float (MAX_INT)
 
+
+
+
+def calculate_min_size(app):
+    zoom_level = app['zoom_level']
+    # Dynamically adjust minimum width/height based on zoom level
+    # Higher zoom level -> smaller min width/height
+    return int(BASE_MIN_SIZE / zoom_level)
