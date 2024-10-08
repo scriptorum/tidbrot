@@ -302,29 +302,32 @@ def alter_color_rgb(color):
 def generate_line_opt(app, match_iter, pix, set, max_iter):
     id = start_time(app, "generate_line_opt")
 
-    # print("generate_line_opt match_iter:", match_iter, "pix:", pix, "set:", set, "max_iter:", max_iter)
-    
     # Determine whether the line is vertical or horizontal
     is_vertical = pix['x1'] == pix['x2']
     
-    # Set start and end based on whether the line is vertical or horizontal
     if is_vertical:
         start, end = pix['y1'], pix['y2']
+        # Precompute xm and the step size for ym to avoid repeated map_range calls
+        xm = set['x1']
+        ym_step = (set['y2'] - set['y1']) / (pix['y2'] - pix['y1'])
+        ym = set['y1']
     else:
         start, end = pix['x1'], pix['x2']
+        # Precompute ym and the step size for xm to avoid repeated map_range calls
+        ym = set['y1']
+        xm_step = (set['x2'] - set['x1']) / (pix['x2'] - pix['x1'])
+        xm = set['x1']
 
-    # Initialize xp, yp and xm, ym for iteration
     xp, yp = pix['x1'], pix['y1']
-    xm, ym = set['x1'], set['y1']
 
-    for val in range(start, end + 1):        
-        # Update xm and ym based on whether it's vertical or horizontal
+    for val in range(start, end + 1):
+        # Update xm and ym incrementally without calling map_range
         if is_vertical:
-            ym = map_range(val, pix['y1'], pix['y2'], set['y1'], set['y2'])
-            yp = val  # Update yp in vertical case
+            yp = val  # Update vertical position
+            ym += ym_step  # Increment ym by precomputed step
         else:
-            xm = map_range(val, pix['x1'], pix['x2'], set['x1'], set['x2'])
-            xp = val  # Update xp in horizontal case
+            xp = val  # Update horizontal position
+            xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
         cache = generate_pixel(app, xp, yp, xm, ym, max_iter)
@@ -337,10 +340,11 @@ def generate_line_opt(app, match_iter, pix, set, max_iter):
         elif match_iter != cache:
             end_time(app, "generate_line_opt", id)
             return False
-        
+
     # All iterations along the line were identical
     end_time(app, "generate_line_opt", id)
     return match_iter
+
 
 # Copies an object and alters one field to a new value
 def alt(obj, field, value):
@@ -692,8 +696,6 @@ def display_times(app):
 
     for category in app["profiling"]:
         elapsed_time_ns = app["profiling"][category]["elapsed"]  # Total elapsed time in nanoseconds
-
-        print("Category: '{}', Raw elapsed ns: {}".format(category, elapsed_time_ns))
 
         if elapsed_time_ns >= 1000000000:  # If more than or equal to 1 second
             elapsed_time_s = elapsed_time_ns / 1000000000.0  # Convert to seconds
