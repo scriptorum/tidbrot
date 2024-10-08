@@ -1,6 +1,5 @@
 #
 # TODO
-# - Expose some optimization controls 
 # - Derive certain variables from a budgeting system
 #    + Measure the time used to find a POI
 #    + If not a lot of time, display a single frame with high AA
@@ -11,13 +10,11 @@ load("random.star", "random")
 load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
+load("schema.star", "schema")
 
-ZOOM_GROWTH = 1.04              # 1 = no zoom in, 1.1 = 10% zoom per frame
-FRAME_DURATION_MS = 150        # milliseconds per frame; for FPS, use value = 1000/fps
+DEF_ZOOM_GROWTH = "1.04"        # 1 = no zoom in, 1.1 = 10% zoom per frame
+
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
-OVERSAMPLE_RANGE = 2            # 1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
-OVERSAMPLE_MULTIPLIER = 2       # 1 = no AA, 2 = 2AA (2x2=4X samples)
-OVERSAMPLE_OFFSET = 0           # 0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
 ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 0.75             # 1.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64              # Tidbyt is 64 pixels wide
@@ -29,13 +26,6 @@ CTRX, CTRY = -0.75, 0           # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 MAX_COLOR_CHANNEL = 8                                      # Max quantized channel values (helps reduce Image Too Large errors)
 CHANNEL_MULT = 255.9999 / MAX_COLOR_CHANNEL                # Conversion from quantized value to full range color channel (0-255)
-
-MAX_FRAMES = int(15000 / FRAME_DURATION_MS)         # Calc total frames in animation
-MAX_ZOOM = math.pow(ZOOM_GROWTH, MAX_FRAMES)        # Calc max zoom
-MAP_WIDTH  =  DISPLAY_WIDTH * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixels samples per row
-MAP_HEIGHT = DISPLAY_HEIGHT * OVERSAMPLE_MULTIPLIER + OVERSAMPLE_OFFSET  # Pixel samples per column
-MAX_PIXEL_X = MAP_WIDTH - 1                  # Maximum sample for x
-MAX_PIXEL_Y = MAP_HEIGHT - 1                 # Maximum sample for y
 BLACK_COLOR = "#000000"                             # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
@@ -43,19 +33,62 @@ BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  
 def main(config):
     # random.seed(4)
     app = {"config": config}
-    # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", MAP_WIDTH, MAP_HEIGHT, "MaxPixel:", MAX_PIXEL_X, MAX_PIXEL_Y)
+    
+    # milliseconds per frame; for FPS, use value = 1000/fps
+    frame_duration_ms = config.str("frames", 500)
+    if not frame_duration_ms.isdigit():
+        return err("Must be an integer: {}".format(frame_duration_ms))
+    app['frame_duration_ms'] = int(frame_duration_ms)
+
+    app['max_frames'] = int(15000 / app['frame_duration_ms'])
+    print("Frame MS:", app['frame_duration_ms'])
+
+    # Zoom growth 1.01 = 1% zoom in per frame
+    app['zoom_growth'] = float(config.str('zoom', DEF_ZOOM_GROWTH))
+    app['max_zoom'] = math.pow(app['zoom_growth'], app['max_frames'])
+    print("Zoom:", app['zoom_growth'])
+
+    # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
+    # MULTIPLIER -->  1 = no or mini AA, 2 = 2AA (2x2=4X samples)
+    # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
+    oversampling = config.str("oversampling", "none")
+    if oversampling == 'none':
+        app['oversample_range'] = 1
+        app['oversample_multiplier'] = 1
+        app['oversample_offset'] = 0
+    elif oversampling == 'mini':
+        app['oversample_range'] = 2
+        app['oversample_multiplier'] = 1
+        app['oversample_offset'] = 1
+    elif oversampling == '2x':
+        app['oversample_range'] = 2
+        app['oversample_multiplier'] = 2
+        app['oversample_offset'] = 0
+    elif oversampling == '4x':
+        app['oversample_range'] = 4
+        app['oversample_multiplier'] = 4
+        app['oversample_offset'] = 0
+    else: 
+        return err("Unknown oversampling value: %s" % oversampling)        
+    print("Oversampling RANGE:", app['oversample_range'], "MULT:", app['oversample_multiplier'], "OFFSET:", app['oversample_offset'])
+
+    app['map_width'] = DISPLAY_WIDTH * app["oversample_multiplier"] + app["oversample_offset"]  # Pixels samples per row
+    app['map_height'] = DISPLAY_HEIGHT * app["oversample_multiplier"] + app["oversample_offset"]  # Pixel samples per column
+    app['max_pixel_x'] = app['map_width'] - 1                  # Maximum sample for x
+    app['max_pixel_y'] = app['map_height'] - 1                 # Maximum sample for y
+
+    # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", app['map_width'], app['map_height'], "MaxPixel:", app['max_pixel_x'], app['max_pixel_y'])
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
     return render.Root(
-        delay = FRAME_DURATION_MS,
+        delay = app['frame_duration_ms'],
         child = render.Box(render.Animation(frames)),
     )
 
 def get_animation_frames(app):
-    print("Determining point of interest")    
     app['zoom_level'] = rnd()*5+1       # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
-    app['max_iter'] = int(math.round(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER * math.pow(ZOOM_GROWTH, MAX_FRAMES)) + 1)    # Calc max iter -- it's wrong, doesn't include initial zoom
+    app['max_iter'] = int(math.round(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER * math.pow(app['zoom_growth'], app['max_frames'])) + 1)    # Calc max iter -- it's wrong, doesn't include initial zoom
     app['gradient'] = get_random_gradient()
 
     x, y = find_point_of_interest(app)  # Choose a point of interest    
@@ -64,13 +97,13 @@ def get_animation_frames(app):
     # Generate multiple frames for animation
     print("Generating frames")
     frames = list()                     # List to store frames of the animation
-    for frame in range(MAX_FRAMES):
+    for frame in range(app['max_frames']):
         print("Generating frame #" + str(frame), " zoom:", app['zoom_level'])
         frame = render_mandelbrot(app, x, y)
         frames.append(frame)
-        app['zoom_level'] *= ZOOM_GROWTH
+        app['zoom_level'] *= app['zoom_growth']
 
-    actual_max_iter = int(MIN_ITER + app['zoom_level']/ZOOM_GROWTH * ZOOM_TO_ITER)
+    actual_max_iter = int(MIN_ITER + app['zoom_level']/app['zoom_growth'] * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(app['max_iter']) + " Actual:" + str(actual_max_iter))
 
     return frames
@@ -85,6 +118,7 @@ def float_range(start, end, num_steps, inclusive=False):
     return result
 
 def find_point_of_interest(app):
+    print("Determining point of interest")    
     x, y, best =  find_poi_near(app, CTRX, CTRY, 0.0, (MAXX-MINX), MAX_POI_SAMPLES, app['max_iter'])
     print("Settled on POI:", x, y, "escape:", best)
     return x, y
@@ -144,12 +178,23 @@ def get_gradient_color(app, iter):
     r,g,b = get_gradient_rgb(app,iter)
     return rgb_to_hex(r, g, b)
 
+def dump(app):
+    for y in range(app['map_height']):
+        row = ""
+        for x in range(app['map_width']):
+            if app['map'][y][x] < 0:
+                row += " "
+            else:
+                row += "X"
+        print(row)
+
 def get_gradient_rgb(app, iter):
     if iter == app['max_iter']:
         return (0,0,0)
     
     elif iter > app['max_iter'] or iter < 0:
         fail("Bad iterations in get_gradient_rgb:", iter)
+                
         return (0,0,0)
     
     # Convert iterations to a color
@@ -279,6 +324,7 @@ def flood_fill(app, area, iter):
 # Generates a specific subset area of the mandelbrot to the map 
 def generate_mandelbrot_area(app, pix, set, iter_limit):
     dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
+    # print("Generate mandelbrot area dxp:{} dyp:{} pix:{} set:{}".format(dxp, dyp, pix, set))
     dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
 
     # A border with the same iterations can be filled with the same color
@@ -290,42 +336,41 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
     if iter != False:
         iter = generate_line_opt(app, iter, alt(pix, 'x1', pix['x2']), alt(set, 'x1', set['x2']), iter_limit)
     if iter != False:
-        # print("Flooding filling region:", pix, " with iter:", iter)
+        # print("Flood fill")
         flood_fill(app, pix, iter)
 
     # Cannot flood fill region
     else:
 
         # Perform vertical split
-        if dyp >= 2 and dyp >= dxp:
+        if dyp >= 3 and dyp >= dxp:
             splityp = int(dyp / 2)
             syp_above = splityp + pix['y1']
             syp_below = syp_above + 1
             sym_above = set['y1'] + splityp * dym
             sym_below = set['y1'] + (splityp + 1) * dym
+            # print("vsplit with iter_limit:{}".format(iter_limit))
             generate_mandelbrot_area(app, alt(pix, 'y2', syp_above), alt(set, 'y2', sym_above), iter_limit)
             generate_mandelbrot_area(app, alt(pix, 'y1', syp_below), alt(set, 'y1', sym_below), iter_limit)
         
         # Perform horizontal split
-        elif dxp >= 2:
+        elif dxp >= 3 and dyp >= 3:
             splitxp = int(dxp / 2)
             sxp_left = splitxp + pix['x1']
             sxp_right = sxp_left + 1
             sxm_left = set['x1'] + splitxp * dxm
             sxm_right = set['x1'] + (splitxp + 1) * dxm
+            # print("hsplit with iter_limit:{}".format(iter_limit))
             generate_mandelbrot_area(app, alt(pix, 'x2', sxp_left),  alt(set, 'x2', sxm_left),  iter_limit)
             generate_mandelbrot_area(app, alt(pix, 'x1', sxp_right), alt(set, 'x1', sxm_right), iter_limit)
 
-
         # This is a small area with differing iterations, calculate/mark them individually
         else:
-            if pix['x2'] - pix['x1'] != 1 or pix['y2'] - pix['y1'] != 1:
-                fail("Expected 2x2 region, but got:", pix, "dxp:", dxp, "dyp:", dyp)
-            else:
-                generate_pixel(app, pix['x1'], pix['y1'], set['x1'], set['y1'], iter_limit)
-                generate_pixel(app, pix['x1'], pix['y2'], set['x1'], set['y2'], iter_limit)
-                generate_pixel(app, pix['x2'], pix['y1'], set['x2'], set['y1'], iter_limit)
-                generate_pixel(app, pix['x2'], pix['y2'], set['x2'], set['y2'], iter_limit)
+            # print("Just generate with iter_limit:{}".format(iter_limit))
+            for offy in range(0, dyp + 1):
+                for offx in range(0, dxp + 1):
+                    generate_pixel(app, pix['x1'] + offx, pix['y1'] + offy, set['x1'] + (dxm * offx), set['y1'] + (dym * offy), iter_limit)
+
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
@@ -348,22 +393,22 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
 
 # Set the number of iterations for a point on the map
 def set_pixel(app, xp, yp, value):
-    if xp < 0 or xp >= MAP_WIDTH or yp < 0 or yp >= MAP_HEIGHT:
+    if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     app['map'][yp][xp] = value
 
 # Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
-    if xp < 0 or xp >= MAP_WIDTH or yp < 0 or yp >= MAP_HEIGHT:
+    if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     return app['map'][yp][xp]
 
 # A map contains either the escape value for that point or -1 (uninitialized)
-def create_empty_map(): 
+def create_empty_map(app): 
     map = list()
-    for y in range(MAP_HEIGHT):
+    for y in range(app['map_height']):
         row = list()
-        for x in range(MAP_WIDTH):
+        for x in range(app['map_width']):
             row.append(int(-1))
         map.append(row)
     return map
@@ -378,12 +423,12 @@ def render_mandelbrot(app, x, y):
     maxx, maxy  = x + half_width, y + half_height
 
     # Create the map
-    app['map'] = create_empty_map()
+    app['map'] = create_empty_map(app)
     app['center'] = (x, y)
     # print("Current center point:", x, y, "Iter:", iterations)
 
     # Generate the map
-    pix = { "x1": 0, "y1": 0, "x2": MAX_PIXEL_X, "y2": MAX_PIXEL_Y }
+    pix = { "x1": 0, "y1": 0, "x2": app['max_pixel_x'], "y2": app['max_pixel_y'] }
     set = { "x1": minx, "y1": miny, "x2": maxx, "y2": maxy }
     app['region'] = set
     generate_mandelbrot_area(app, pix, set, iterations)
@@ -397,24 +442,25 @@ def render_display(app):
     total_runs = 0
     rows = list()
     for y in range(DISPLAY_HEIGHT):
-        osy = y*OVERSAMPLE_MULTIPLIER
+        osy = y*app["oversample_multiplier"]
         row = list()
         next_color = ""
         run_length = 0
 
         for x in range(DISPLAY_WIDTH):
-            osx = x*OVERSAMPLE_MULTIPLIER
+            osx = x*app["oversample_multiplier"]
             
-            if DISPLAY_WIDTH == MAP_WIDTH:
+            # Get color from single pixel
+            if DISPLAY_WIDTH == app['map_width']:
                 iter = get_pixel(app, osx, osy)
                 rgb = get_gradient_rgb(app, iter)
                 color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
 
-            # Super sample this sheeit
+            # Get color by oversampling
             else:
                 samples = []
-                for offy in range(OVERSAMPLE_RANGE):
-                    for offx in range(OVERSAMPLE_RANGE):  
+                for offy in range(app["oversample_range"]):
+                    for offx in range(app["oversample_range"]):  
                         iter = get_pixel(app, osx + offx , osy + offy)
                         samples.append(iter)
 
@@ -457,3 +503,58 @@ def addBox(row, run_length, color):
 
 def rnd():
     return float(random.number(0, MAX_INT)) / float (MAX_INT)
+
+def get_schema():
+    return schema.Schema(
+        version = "1",
+        fields = [
+            schema.Dropdown(
+                id="oversampling",
+                name="Oversampling",
+                desc="Oversampling Method",
+                icon="circle-dot",
+                default="none",
+                options=[
+                    schema.Option(value="none", display="None"),
+                    schema.Option(value="mini", display="Mini AA"),
+                    schema.Option(value="2x", display="2X AA"),
+                    schema.Option(value="4x", display="4X AA"),
+                ]        
+            ),
+            schema.Dropdown(
+                id="zoom",
+                name="Zoom",
+                desc="Amount to zoom in per frame",
+                icon="magnifying-glass-plus",
+                default=DEF_ZOOM_GROWTH,
+                options=[
+                    schema.Option(value="1.01", display="1%"),
+                    schema.Option(value="1.02", display="2%"),
+                    schema.Option(value="1.03", display="3%"),
+                    schema.Option(value="1.04", display="4%"),
+                    schema.Option(value="1.05", display="5%"),
+                    schema.Option(value="1.06", display="6%"),
+                    schema.Option(value="1.07", display="7%"),
+                    schema.Option(value="1.08", display="8%"),
+                ]        
+            ),
+            schema.Text(
+                id="frames",
+                name="Frame Rate",
+                desc="Milliseconds per frame",
+                icon="clock",
+                default="150",
+            )
+        ]
+    )
+
+def err(msg):
+    return render.Root(
+        render.Marquee(
+            width=64,
+            child=render.Text(msg),
+            offset_start=5,
+            offset_end=32,
+        )
+    )
+
