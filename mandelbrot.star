@@ -11,6 +11,7 @@ load("render.star", "render")
 load("time.star", "time")
 load("math.star", "math")
 load("schema.star", "schema")
+load("humanize.star", "humanize")
 
 DEF_ZOOM_GROWTH = "1.04"        # 1 = no zoom in, 1.1 = 10% zoom per frame
 
@@ -81,25 +82,35 @@ def main(config):
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
+
+    display_times(app)
+
     return render.Root(
         delay = app['frame_duration_ms'],
         child = render.Box(render.Animation(frames)),
     )
 
 def get_animation_frames(app):
-    app['zoom_level'] = rnd()*5+1       # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
+    app['zoom_level'] = rnd(app)*5+1       # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
     app['max_iter'] = int(math.round(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER * math.pow(app['zoom_growth'], app['max_frames'])) + 1)    # Calc max iter -- it's wrong, doesn't include initial zoom
-    app['gradient'] = get_random_gradient()
 
+    id = start_time(app, "get_random_gradient")
+    app['gradient'] = get_random_gradient(app)
+    end_time(app, "get_random_gradient", id)
+
+    id = start_time(app, "poi")
     x, y = find_point_of_interest(app)  # Choose a point of interest    
     app['target'] = (x, y)
+    end_time(app, "poi", id)
 
     # Generate multiple frames for animation
     print("Generating frames")
     frames = list()                     # List to store frames of the animation
     for frame in range(app['max_frames']):
         print("Generating frame #" + str(frame), " zoom:", app['zoom_level'])
+        id = start_time(app, "render_mandelbrot")
         frame = render_mandelbrot(app, x, y)
+        end_time(app, "render_mandelbrot", id)
         frames.append(frame)
         app['zoom_level'] *= app['zoom_growth']
 
@@ -127,7 +138,7 @@ def find_poi_near(app, x, y, esc, depth, num_samples, iter_limit):
     bestx, besty, best_escape = x, y, esc
 
     for num in range(num_samples):
-        x, y = bestx + (rnd() - 0.5) * depth, besty + (rnd() - 0.5) * depth
+        x, y = bestx + (rnd(app) - 0.5) * depth, besty + (rnd(app) - 0.5) * depth
         iter, last_escape = mandelbrot_calc(app, x, y, iter_limit)
         if last_escape < ESCAPE_THRESHOLD and last_escape > best_escape:
             bestx, besty, best_escape = x, y, last_escape
@@ -144,6 +155,7 @@ def map_range(v, min1, max1, min2, max2):
 # Returns both the escape distance and the number of iterations 
 # (cannot exceed iter_limit)
 def mandelbrot_calc(app, x, y, iter_limit):
+    id = start_time(app, "calc")
     zr, zi = 0.0, 0.0
     cr, ci = x, y
 
@@ -156,12 +168,14 @@ def mandelbrot_calc(app, x, y, iter_limit):
         # Check if the point has escaped (this should happen after both zr and zi are updated)
         dist = zr2 + zi2
         if dist > ESCAPE_THRESHOLD:
+            end_time(app, "calc", id)
             return (iter, dist)
 
         # Perform z = z^2 + c
         zi = 2 * zr * zi + ci
         zr = zr2 - zi2 + cr
 
+    end_time(app, "calc", id)
     return (app['max_iter'], dist)
 
 def int_to_hex(n):
@@ -175,8 +189,14 @@ def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def get_gradient_color(app, iter):
+    id = start_time(app, "get_gradient_color")
+
     r,g,b = get_gradient_rgb(app,iter)
-    return rgb_to_hex(r, g, b)
+    color = rgb_to_hex(r, g, b)
+
+    end_time(app, "get_gradient_color", id)
+    return color
+
 
 def dump(app):
     for y in range(app['map_height']):
@@ -248,12 +268,14 @@ def blend_rgbs(*rgbs):
 def random_color_tuple():
     return (random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL))
 
-def get_random_gradient():
+def get_random_gradient(app):
     print ("Generating gradient")
     gradient = []
     color = random_color_tuple()
     for i in range(0, NUM_GRADIENT_STEPS):
+        id = start_time(app, "alter_color_rgb")
         color = alter_color_rgb(color)
+        end_time(app, "alter_color_rgb", id)
         gradient.append(color)
     return gradient
 
@@ -274,6 +296,8 @@ def alter_color_rgb(color):
 # compare all iterations against this value
 # Returns the number of iterations, or False if they are not all the same
 def generate_line_opt(app, match_iter, pix, set, max_iter):
+    id = start_time(app, "generate_line_opt")
+
     # print("generate_line_opt match_iter:", match_iter, "pix:", pix, "set:", set, "max_iter:", max_iter)
     
     # Determine whether the line is vertical or horizontal
@@ -307,9 +331,11 @@ def generate_line_opt(app, match_iter, pix, set, max_iter):
 
         # Bail early: Not all iterations along the line were identical
         elif match_iter != cache:
+            end_time(app, "generate_line_opt", id)
             return False
         
     # All iterations along the line were identical
+    end_time(app, "generate_line_opt", id)
     return match_iter
 
 # Copies an object and alters one field to a new value
@@ -321,15 +347,22 @@ def alt(obj, field, value):
     return c
 
 def flood_fill(app, area, iter):
+    id = start_time(app, "flood_fill")
+
     for y in range(area['y1'], area['y2'] + 1):
         for x in range(area['x1'], area['x2'] + 1):
             set_pixel(app, x, y, iter)
+    end_time(app, "flood_fill", id)
 
 # Generates a specific subset area of the mandelbrot to the map 
 def generate_mandelbrot_area(app, pix, set, iter_limit):
+    id = start_time(app, "generate_mandelbrot_area")
+
+    dp_id = start_time(app, "generate_mandelbrot_area dp calc")
     dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
     # print("Generate mandelbrot area dxp:{} dyp:{} pix:{} set:{}".format(dxp, dyp, pix, set))
     dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
+    end_time(app, "generate_mandelbrot_area dp calc", dp_id)
 
     # A border with the same iterations can be filled with the same color
     iter = generate_line_opt(app, -1, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
@@ -348,38 +381,49 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
 
         # Perform vertical split
         if dyp >= 3 and dyp >= dxp:
+            split_calc_id = start_time(app, "generate_mandelbrot_area split_calc")
             splityp = int(dyp / 2)
             syp_above = splityp + pix['y1']
             syp_below = syp_above + 1
             sym_above = set['y1'] + splityp * dym
             sym_below = set['y1'] + (splityp + 1) * dym
+            end_time(app, "generate_mandelbrot_area split_calc", split_calc_id)
+
             # print("vsplit with iter_limit:{}".format(iter_limit))
             generate_mandelbrot_area(app, alt(pix, 'y2', syp_above), alt(set, 'y2', sym_above), iter_limit)
             generate_mandelbrot_area(app, alt(pix, 'y1', syp_below), alt(set, 'y1', sym_below), iter_limit)
         
         # Perform horizontal split
         elif dxp >= 3 and dyp >= 3:
+            split_calc_id = start_time(app, "generate_mandelbrot_area split_calc")
             splitxp = int(dxp / 2)
             sxp_left = splitxp + pix['x1']
             sxp_right = sxp_left + 1
             sxm_left = set['x1'] + splitxp * dxm
             sxm_right = set['x1'] + (splitxp + 1) * dxm
+            end_time(app, "generate_mandelbrot_area split_calc", split_calc_id)
             # print("hsplit with iter_limit:{}".format(iter_limit))
             generate_mandelbrot_area(app, alt(pix, 'x2', sxp_left),  alt(set, 'x2', sxm_left),  iter_limit)
             generate_mandelbrot_area(app, alt(pix, 'x1', sxp_right), alt(set, 'x1', sxm_right), iter_limit)
 
         # This is a small area with differing iterations, calculate/mark them individually
         else:
+            final_generate_id = start_time(app, "generate_mandelbrot_area final_generate_pixel")
             # print("Just generate with iter_limit:{}".format(iter_limit))
             for offy in range(0, dyp + 1):
                 for offx in range(0, dxp + 1):
                     generate_pixel(app, pix['x1'] + offx, pix['y1'] + offy, set['x1'] + (dxm * offx), set['y1'] + (dym * offy), iter_limit)
+            end_time(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
+    end_time(app, "generate_mandelbrot_area", id)
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(app, xp, yp, xm, ym, iter_limit):
+    id = start_time(app, "generate_pixel")
+
     stored_val = get_pixel(app, xp, yp)
     if stored_val != -1:
+        end_time(app, "generate_pixel", id)
         return stored_val
     
     # Normal mandelbrot calculation
@@ -392,28 +436,36 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     # Save iterations for pixel in map
     set_pixel(app, xp, yp, iter)
 
+    end_time(app, "generate_pixel", id)
     return iter
 
 # Set the number of iterations for a point on the map
 def set_pixel(app, xp, yp, value):
+    id = start_time(app, "set_pixel")
     if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     app['map'][yp][xp] = value
+    end_time(app, "set_pixel", id)
 
 # Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
+    id = start_time(app, "get_pixel")
     if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
         fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
-    return app['map'][yp][xp]
+    val = app['map'][yp][xp]
+    end_time(app, "get_pixel", id)
+    return val
 
 # A map contains either the escape value for that point or -1 (uninitialized)
 def create_empty_map(app): 
+    id = start_time(app, "create_empty_map")
     map = list()
     for y in range(app['map_height']):
         row = list()
         for x in range(app['map_width']):
             row.append(int(-1))
         map.append(row)
+    end_time(app, "create_empty_map", id)
     return map
 
 def render_mandelbrot(app, x, y):
@@ -441,7 +493,8 @@ def render_mandelbrot(app, x, y):
 
 # Converts a map to a Tidbyt Column made up of Rows made up of Boxes
 def render_display(app):
-    # Loop through each pixel in the display
+    rd_id = start_time(app, "render_display")
+     # Loop through each pixel in the display
     total_runs = 0
     rows = list()
     osx, osy = 0, 0
@@ -470,8 +523,10 @@ def render_display(app):
                 for sample in samples:
                     rgbs.append(get_gradient_rgb(app, sample))
 
+                id = start_time(app, "blend_rgbs")
                 color = blend_rgbs(*rgbs)
-            
+                end_time(app, "blend_rgbs", id)
+           
             # Add a 1x1 box with the appropriate color to the row        
             if next_color == "": # First color of row
                 run_length = 1
@@ -479,7 +534,7 @@ def render_display(app):
             elif color == next_color: # Color run detected
                 run_length += 1
             else: # Color change
-                addBox(row, run_length, next_color)
+                add_box(row, run_length, next_color)
                 total_runs += 1
                 run_length = 1
                 next_color = color
@@ -488,26 +543,32 @@ def render_display(app):
         osy += app["oversample_multiplier"]
 
         # Add the row to the grid
-        addBox(row, run_length, color) # Add last box for row
+        id = start_time(app, "add_box")
+        add_box(row, run_length, color) # Add last box for row
+        end_time(app, "add_box", id)
         total_runs += 1
         rows.append(render.Row(children = row))
 
     # pixel_count = DISPLAY_WIDTH * DISPLAY_HEIGHT
     # compression = int((total_runs / pixel_count) * 10000) / 100.0
     # print("Pixel count:", pixel_count, "Total runs:", total_runs, "Compression:", str(compression) + "%")
+    end_time(app, "render_display", rd_id)
 
     return render.Column(
         children = rows,
     )
 
-def addBox(row, run_length, color):
+def add_box(row, run_length, color):
     if run_length == 1 and color == BLACK_PIXEL:
         row.append(BLACK_PIXEL)
     else:
         row.append(render.Box(width=run_length, height=1, color=color))
 
-def rnd():
-    return float(random.number(0, MAX_INT)) / float (MAX_INT)
+def rnd(app):
+    id = start_time(app, "rnd")
+    val = float(random.number(0, MAX_INT)) / float (MAX_INT)
+    end_time(app, "rnd", id)
+    return val
 
 def get_schema():
     return schema.Schema(
@@ -563,3 +624,64 @@ def err(msg):
         )
     )
 
+
+def start_time(app, category):
+    if "profiling" not in app:
+        app["profiling"] = {}
+    
+    # Ensure category exists
+    if category not in app["profiling"]:
+        app["profiling"][category] = {
+            "elapsed": 0,  # Store total elapsed time
+            "timers": []   # Store individual timer start times
+        }
+    
+    # Get the current time in nanoseconds and store it as a unique timer
+    start_time_ns = time.now().unix_nano
+    timer_id = len(app["profiling"][category]["timers"])
+    app["profiling"][category]["timers"].append(start_time_ns)
+
+    # Return the timer ID for reference in end_time
+    return timer_id
+
+def end_time(app, category, timer_id):
+    if "profiling" not in app or category not in app["profiling"]:
+        fail("Must call start before end for category '{}'".format(category))
+
+    # Ensure the timer_id is valid and exists
+    timers = app["profiling"][category]["timers"]
+    if timer_id >= len(timers) or timers[timer_id] == None:
+        fail("Invalid timer_id '{}' for category '{}'".format(timer_id, category))
+
+    # Get the current time as end time and calculate elapsed nanoseconds
+    end_time_ns = time.now().unix_nano
+    elapsed = end_time_ns - timers[timer_id]
+
+    # Add the elapsed time to the total and mark the timer as stopped
+    app["profiling"][category]["elapsed"] += elapsed
+    app["profiling"][category]["timers"][timer_id] = None  # Mark timer as ended
+
+def display_times(app):
+    # Display all categories' cumulative profiling results
+    if "profiling" not in app:
+        return "No profiling data available."
+    
+    result = "PROFILE\n"
+
+    for category in app["profiling"]:
+        elapsed_time_ns = app["profiling"][category]["elapsed"]  # Total elapsed time in nanoseconds
+
+        print("Category: '{}', Raw elapsed ns: {}".format(category, elapsed_time_ns))
+
+        if elapsed_time_ns >= 1000000000:  # If more than or equal to 1 second
+            elapsed_time_s = elapsed_time_ns / 1000000000.0  # Convert to seconds
+            elapsed_time_s_rounded = math.round(elapsed_time_s * 1000) / 1000  # Round to 3 decimal places
+            result += " + '{}': {} sec\n".format(category, elapsed_time_s_rounded)
+        elif elapsed_time_ns >= 1000000:  # If more than or equal to 1 millisecond
+            elapsed_time_ms = elapsed_time_ns / 1000000.0  # Convert to milliseconds
+            elapsed_time_ms_rounded = math.round(elapsed_time_ms * 1000) / 1000  # Round to 3 decimal places
+            result += " + '{}': {} ms\n".format(category, elapsed_time_ms_rounded)
+        else:
+            result += " + '{}': {} ns\n".format(category, elapsed_time_ns)  # Display nanoseconds directly
+
+    print(result)
