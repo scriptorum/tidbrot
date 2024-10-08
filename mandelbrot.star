@@ -156,27 +156,30 @@ def map_range(v, min1, max1, min2, max2):
 # (cannot exceed iter_limit)
 def mandelbrot_calc(app, x, y, iter_limit):
     id = start_time(app, "calc")
-    zr, zi = 0.0, 0.0
-    cr, ci = x, y
+    
+    # Initialize z (zr, zi) and c (cr, ci)
+    x2, y2, w = 0.0, 0.0, 0.0
 
-    dist = 0
-    for iter in range(1, iter_limit + 1):
-        # Precompute squares to avoid repeating the same multiplication
-        zr2 = zr * zr
-        zi2 = zi * zi
-
-        # Check if the point has escaped (this should happen after both zr and zi are updated)
-        dist = zr2 + zi2
-        if dist > ESCAPE_THRESHOLD:
+    # Use a for loop to simulate the behavior of a while loop
+    for iteration in range(1, iter_limit + 1):
+        # Check if the point has escaped
+        if x2 + y2 > ESCAPE_THRESHOLD:
             end_time(app, "calc", id)
-            return (iter, dist)
+            return (iteration, x2 + y2)
 
-        # Perform z = z^2 + c
-        zi = 2 * zr * zi + ci
-        zr = zr2 - zi2 + cr
+        # Calculate new zr and zi (x and y in pseudocode)
+        zr = x2 - y2 + x
+        zi = w - x2 - y2 + y
 
+        # Update squares and w for the next iteration
+        x2 = zr * zr
+        y2 = zi * zi
+        w = (zr + zi) * (zr + zi)
+
+    # End timing and return the max iteration and the final distance if escape condition is not met
     end_time(app, "calc", id)
-    return (app['max_iter'], dist)
+    return (iter_limit, x2 + y2)
+
 
 def int_to_hex(n):
     if n > 255:
@@ -213,6 +216,7 @@ def get_gradient_rgb(app, iter):
         return (0,0,0)
     
     elif iter > app['max_iter'] or iter < 0:
+        dump(app)
         fail("Bad iterations in get_gradient_rgb:", iter)
                 
         return (0,0,0)
@@ -354,67 +358,85 @@ def flood_fill(app, area, iter):
             set_pixel(app, x, y, iter)
     end_time(app, "flood_fill", id)
 
-# Generates a specific subset area of the mandelbrot to the map 
+
+
+
+
 def generate_mandelbrot_area(app, pix, set, iter_limit):
     id = start_time(app, "generate_mandelbrot_area")
 
-    dp_id = start_time(app, "generate_mandelbrot_area dp calc")
-    dxp, dyp = int(pix['x2'] - pix['x1']), int(pix['y2'] - pix['y1'])
-    # print("Generate mandelbrot area dxp:{} dyp:{} pix:{} set:{}".format(dxp, dyp, pix, set))
-    dxm, dym = float(set['x2'] - set['x1']) / float(dxp), float(set['y2'] - set['y1']) / float(dyp)
-    end_time(app, "generate_mandelbrot_area dp calc", dp_id)
+    # Initialize the stack with the first region to process
+    stack = [(pix, set)]
 
-    # A border with the same iterations can be filled with the same color
-    iter = generate_line_opt(app, -1, alt(pix, 'y2', pix['y1']), alt(set, 'y2', set['y1']), iter_limit)
-    if iter != False:
-        iter = generate_line_opt(app, iter, alt(pix, 'y1', pix['y2']), alt(set, 'y1', set['y2']), iter_limit)
-    if iter != False:
-        iter = generate_line_opt(app, iter, alt(pix, 'x2', pix['x1']), alt(set, 'x2', set['x1']), iter_limit)
-    if iter != False:
-        iter = generate_line_opt(app, iter, alt(pix, 'x1', pix['x2']), alt(set, 'x1', set['x2']), iter_limit)
-    if iter != False:
-        # print("Flood fill")
-        flood_fill(app, pix, iter)
+    # We will dynamically increase the stack in the loop
+    for i in range(MAX_INT): # Why no for loop, damn you
+        if len(stack) == 0:
+            break
 
-    # Cannot flood fill region
-    else:
+        # Pop the last item from the stack
+        current_pix, current_set = stack.pop()
 
-        # Perform vertical split
-        if dyp >= 3 and dyp >= dxp:
-            split_calc_id = start_time(app, "generate_mandelbrot_area split_calc")
-            splityp = int(dyp / 2)
-            syp_above = splityp + pix['y1']
-            syp_below = syp_above + 1
-            sym_above = set['y1'] + splityp * dym
-            sym_below = set['y1'] + (splityp + 1) * dym
-            end_time(app, "generate_mandelbrot_area split_calc", split_calc_id)
+        dmdp_id = start_time(app, "generate_mandelbrot_area_dmdp")
+        dxp, dyp = int(current_pix['x2'] - current_pix['x1']), int(current_pix['y2'] - current_pix['y1'])
+        dxm, dym = float(current_set['x2'] - current_set['x1']) / float(dxp), float(current_set['y2'] - current_set['y1']) / float(dyp)
+        end_time(app, "generate_mandelbrot_area_dmdp", dmdp_id)
 
-            # print("vsplit with iter_limit:{}".format(iter_limit))
-            generate_mandelbrot_area(app, alt(pix, 'y2', syp_above), alt(set, 'y2', sym_above), iter_limit)
-            generate_mandelbrot_area(app, alt(pix, 'y1', syp_below), alt(set, 'y1', sym_below), iter_limit)
-        
-        # Perform horizontal split
-        elif dxp >= 3 and dyp >= 3:
-            split_calc_id = start_time(app, "generate_mandelbrot_area split_calc")
-            splitxp = int(dxp / 2)
-            sxp_left = splitxp + pix['x1']
-            sxp_right = sxp_left + 1
-            sxm_left = set['x1'] + splitxp * dxm
-            sxm_right = set['x1'] + (splitxp + 1) * dxm
-            end_time(app, "generate_mandelbrot_area split_calc", split_calc_id)
-            # print("hsplit with iter_limit:{}".format(iter_limit))
-            generate_mandelbrot_area(app, alt(pix, 'x2', sxp_left),  alt(set, 'x2', sxm_left),  iter_limit)
-            generate_mandelbrot_area(app, alt(pix, 'x1', sxp_right), alt(set, 'x1', sxm_right), iter_limit)
+        # A border with the same iterations can be filled with the same color
+        iter = generate_line_opt(app, -1, alt(current_pix, 'y2', current_pix['y1']), alt(current_set, 'y2', current_set['y1']), iter_limit)
+        if iter != False:
+            iter = generate_line_opt(app, iter, alt(current_pix, 'y1', current_pix['y2']), alt(current_set, 'y1', current_set['y2']), iter_limit)
+        if iter != False:
+            iter = generate_line_opt(app, iter, alt(current_pix, 'x2', current_pix['x1']), alt(current_set, 'x2', current_set['x1']), iter_limit)
+        if iter != False:
+            iter = generate_line_opt(app, iter, alt(current_pix, 'x1', current_pix['x2']), alt(current_set, 'x1', current_set['x2']), iter_limit)
+        if iter != False:
+            flood_fill(app, current_pix, iter)
 
-        # This is a small area with differing iterations, calculate/mark them individually
         else:
-            final_generate_id = start_time(app, "generate_mandelbrot_area final_generate_pixel")
-            # print("Just generate with iter_limit:{}".format(iter_limit))
-            for offy in range(0, dyp + 1):
-                for offx in range(0, dxp + 1):
-                    generate_pixel(app, pix['x1'] + offx, pix['y1'] + offy, set['x1'] + (dxm * offx), set['y1'] + (dym * offy), iter_limit)
-            end_time(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
+            # Perform vertical split
+            if dyp >= 3 and dyp >= dxp:
+                split_id = start_time(app, "generate_mandelbrot_area_split")
+
+                splityp = int(dyp / 2)
+                syp_above = splityp + current_pix['y1']
+                syp_below = syp_above + 1
+                sym_above = current_set['y1'] + splityp * dym
+                sym_below = current_set['y1'] + (splityp + 1) * dym
+
+                end_time(app, "generate_mandelbrot_area_split", split_id)
+
+                # Add sub-regions to the stack
+                stack.append((alt(current_pix, 'y1', syp_below), alt(current_set, 'y1', sym_below)))
+                stack.append((alt(current_pix, 'y2', syp_above), alt(current_set, 'y2', sym_above)))
+
+            # Perform horizontal split
+            elif dxp >= 3 and dyp >= 3:
+                split_id = start_time(app, "generate_mandelbrot_area_split")
+                splitxp = int(dxp / 2)
+                sxp_left = splitxp + current_pix['x1']
+                sxp_right = sxp_left + 1
+                sxm_left = current_set['x1'] + splitxp * dxm
+                sxm_right = current_set['x1'] + (splitxp + 1) * dxm
+                end_time(app, "generate_mandelbrot_area_split", split_id)
+
+                # Add sub-regions to the stack
+                stack.append((alt(current_pix, 'x1', sxp_right), alt(current_set, 'x1', sxm_right)))
+                stack.append((alt(current_pix, 'x2', sxp_left), alt(current_set, 'x2', sxm_left)))
+
+            # This is a small area with differing iterations, calculate/mark them individually
+            else:
+                final_generate_id = start_time(app, "generate_mandelbrot_area final_generate_pixel")
+                for offy in range(0, dyp + 1):
+                    for offx in range(0, dxp + 1):
+                        generate_pixel(app, current_pix['x1'] + offx, current_pix['y1'] + offy, current_set['x1'] + (dxm * offx), current_set['y1'] + (dym * offy), iter_limit)
+                end_time(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
+
     end_time(app, "generate_mandelbrot_area", id)
+
+
+
+
+
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
