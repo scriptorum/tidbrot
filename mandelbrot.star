@@ -31,11 +31,11 @@ MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark m
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    # random.seed(4)
+    random.seed(4)
     app = {"config": config}
     
     # milliseconds per frame; for FPS, use value = 1000/fps
-    frame_duration_ms = config.str("frames", 500)
+    frame_duration_ms = config.str("frames", "500")
     if not frame_duration_ms.isdigit():
         return err("Must be an integer: {}".format(frame_duration_ms))
     app['frame_duration_ms'] = int(frame_duration_ms)
@@ -238,6 +238,10 @@ def blend_rgbs(*rgbs):
 
     if count == 0:
         return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
+    elif count == 2: # Lame optimization
+        return rgb_to_hex(int(tr << 2 * CHANNEL_MULT), int(tg << 2 * CHANNEL_MULT), int(tb << 2 * CHANNEL_MULT))
+    elif count == 4: # Lame optimization
+        return rgb_to_hex(int(tr << 4 * CHANNEL_MULT), int(tg << 4 * CHANNEL_MULT), int(tb << 4 * CHANNEL_MULT))
 
     return rgb_to_hex(int(tr / count * CHANNEL_MULT), int(tg / count * CHANNEL_MULT), int(tb / count * CHANNEL_MULT))
 
@@ -371,7 +375,6 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
                 for offx in range(0, dxp + 1):
                     generate_pixel(app, pix['x1'] + offx, pix['y1'] + offy, set['x1'] + (dxm * offx), set['y1'] + (dym * offy), iter_limit)
 
-
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(app, xp, yp, xm, ym, iter_limit):
@@ -441,15 +444,14 @@ def render_display(app):
     # Loop through each pixel in the display
     total_runs = 0
     rows = list()
+    osx, osy = 0, 0
     for y in range(DISPLAY_HEIGHT):
-        osy = y*app["oversample_multiplier"]
         row = list()
         next_color = ""
         run_length = 0
+        osx = 0
 
-        for x in range(DISPLAY_WIDTH):
-            osx = x*app["oversample_multiplier"]
-            
+        for x in range(DISPLAY_WIDTH):            
             # Get color from single pixel
             if DISPLAY_WIDTH == app['map_width']:
                 iter = get_pixel(app, osx, osy)
@@ -482,6 +484,9 @@ def render_display(app):
                 run_length = 1
                 next_color = color
 
+            osx += app["oversample_multiplier"]
+        osy += app["oversample_multiplier"]
+
         # Add the row to the grid
         addBox(row, run_length, color) # Add last box for row
         total_runs += 1
@@ -512,8 +517,8 @@ def get_schema():
                 id="oversampling",
                 name="Oversampling",
                 desc="Oversampling Method",
-                icon="circle-dot",
-                default="none",
+                icon="border-none",
+                default="mini",
                 options=[
                     schema.Option(value="none", display="None"),
                     schema.Option(value="mini", display="Mini AA"),
