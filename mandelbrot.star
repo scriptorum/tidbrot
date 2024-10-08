@@ -205,7 +205,7 @@ def dump(app):
     for y in range(app['map_height']):
         row = ""
         for x in range(app['map_width']):
-            if app['map'][y][x] < 0:
+            if get_pixel(app, x, y) < 0:
                 row += " "
             else:
                 row += "X"
@@ -330,7 +330,9 @@ def generate_line_opt(app, match_iter, pix, set, max_iter):
             xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
+        cache_id = start_time(app, "generate_line_opt/generate_pixel")
         cache = generate_pixel(app, xp, yp, xm, ym, max_iter)
+        end_time(app, "generate_line_opt/generate_pixel", cache_id)
 
         # Initialize match_iter on first iteration
         if match_iter == -1:
@@ -465,34 +467,43 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     end_time(app, "generate_pixel", id)
     return iter
 
-# Set the number of iterations for a point on the map
+
+
+
 def set_pixel(app, xp, yp, value):
     id = start_time(app, "set_pixel")
-    if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
-        fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
-    app['map'][yp][xp] = value
+    # Check if xp and yp are within valid bounds
+    # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
+    #     fail("Bad set_pixel(" + str(xp) + "," + str(yp) + ") call")
+
+    index = yp * app['map_width'] + xp
+    app['map'][index] = value
     end_time(app, "set_pixel", id)
 
-# Returns the number of iterations for a point on the map
 def get_pixel(app, xp, yp):
     id = start_time(app, "get_pixel")
-    if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
-        fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
-    val = app['map'][yp][xp]
-    end_time(app, "get_pixel", id)
-    return val
+    # Check if xp and yp are within valid bounds
+    # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
+    #     fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
+    
+    index = yp * app['map_width'] + xp
+    value = app['map'][index]
 
-# A map contains either the escape value for that point or -1 (uninitialized)
+    end_time(app, "get_pixel", id)
+    return value
+
 def create_empty_map(app): 
     id = start_time(app, "create_empty_map")
-    map = list()
-    for y in range(app['map_height']):
-        row = list()
-        for x in range(app['map_width']):
-            row.append(int(-1))
-        map.append(row)
+    map_size = app['map_width'] * app['map_height']
+    map = []
+    for i in range(map_size):
+        map.append(-1)  # Manually append -1 for each entry
+    app['map'] = map
     end_time(app, "create_empty_map", id)
-    return map
+
+
+
+
 
 def render_mandelbrot(app, x, y):
     iterations = int(MIN_ITER + app['zoom_level'] * ZOOM_TO_ITER)
@@ -502,10 +513,10 @@ def render_mandelbrot(app, x, y):
     half_height = (MAXY - MINY) / app['zoom_level'] / 2.0
     minx, miny  = x - half_width, y - half_height
     maxx, maxy  = x + half_width, y + half_height
+    app['center'] = (x, y)
 
     # Create the map
-    app['map'] = create_empty_map(app)
-    app['center'] = (x, y)
+    create_empty_map(app)
     # print("Current center point:", x, y, "Iter:", iterations)
 
     # Generate the map
