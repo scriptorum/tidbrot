@@ -116,7 +116,7 @@ POPULAR_POI = [
     (0.4064, 0.355, 1200, "Closeup Julia-like spirals"),
     (-0.1435, 0.774, 1000, "Upper mini-tendrils"),
     (-1.1, 0.39, 500, "Period 3 bulb detail"),
-    (-0.462, 0.734, 800, "Alternate Seahorse branch"),
+    (-0.462, 0.734, 10, "Alternate Seahorse branch"),
     (-0.711, 0.41, 300, "Smaller bulbs"),
     (-1.4, 0.1, 200, "Mini-bulb branch detail"),
     (-1.0496, 0.0274, 4000, "Needle upper fine structure"),
@@ -125,7 +125,7 @@ POPULAR_POI = [
 ]
 
 def main(config):
-    # random.seed(5)
+    random.seed(5)
     app = {"config": config}
 
     # milliseconds per frame; for FPS, use value = 1000/fps
@@ -178,18 +178,25 @@ def main(config):
 
     # Determine what POI to zoom onto
     app['target'] = 0,0
+    app['zoom_level'] = rnd(app) * 5 + 1
     poi_type = config.str("poi", "search")
     if poi_type == "search":
         poi_id = timer_start(app, "poi")
         app["target"] = find_point_of_interest(app)  # Choose a point of interest
+        app["desc"] = "random"
         timer_stop(app, "poi", poi_id)
     elif poi_type == "specific":
-        app["target"] = float(config.str["poi_coord_real"]), float(config.str["poi_coord_imaginary"])
+        app["target"] = float(config.str("poi_coord_real",0)), float(config.str("poi_coord_imaginary",0))
+        app["desc"] = "your coordinates"
     elif poi_type == "popular":
         popular = POPULAR_POI[random.number(0, len(POPULAR_POI))]
         app["target"] = popular[0], popular[1]
+        app["zoom_level"] = popular[2]
+        app["desc"] = popular[3]
     else:
         return err("Unrecognized POI type: {}".format(poi_type))
+    print("POI target:", app['target'][0], app['target'][1], "Desc:", app['desc'])
+    print("Zoom Level:", app['zoom_level'])
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
@@ -202,7 +209,6 @@ def main(config):
     )
 
 def get_animation_frames(app):
-    app["zoom_level"] = rnd(app) * 5 + 1  # 1.0 = Shows most of the mandelbrot set, -0.8 = all, 1+= zoomed in
     app["max_iter"] = int(math.round(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER * math.pow(app["zoom_growth"], app["max_frames"])) + 1)  # Calc max iter -- it's wrong, doesn't include initial zoom
 
     id = timer_start(app, "get_random_gradient")
