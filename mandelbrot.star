@@ -17,7 +17,7 @@ DEF_ZOOM_GROWTH = "1.04"        # 1 = no zoom in, 1.1 = 10% zoom per frame
 
 MIN_ITER = 30                   # minimum iterations, raise if initial zoom is > 1
 ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
-ZOOM_TO_ITER = 0.75             # 1.0 standard, less for faster calc, less accuracy
+ZOOM_TO_ITER = 1.0             # 1.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64              # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32             # Tidbyt is 32 pixels high
 NUM_GRADIENT_STEPS = 32         # Higher = more color variation
@@ -361,7 +361,7 @@ def flood_fill(app, area, iter):
 
     for y in range(area['y1'], area['y2'] + 1):
         for x in range(area['x1'], area['x2'] + 1):
-            set_pixel(app, x, y, iter)
+            app['map'][y * app['map_width'] + x] = iter #set_pixel(app, x, y, iter)
     end_time(app, "flood_fill", id)
 
 
@@ -449,7 +449,7 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
 def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     id = start_time(app, "generate_pixel")
 
-    stored_val = get_pixel(app, xp, yp)
+    stored_val = app['map'][yp * app['map_width'] + xp] # get_pixel(app, xp, yp)
     if stored_val != -1:
         end_time(app, "generate_pixel", id)
         return stored_val
@@ -462,7 +462,7 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
         iter = app['max_iter']
 
     # Save iterations for pixel in map
-    set_pixel(app, xp, yp, iter)
+    app['map'][yp * app['map_width'] + xp] = iter # set_pixel(app, xp, yp, iter)
 
     end_time(app, "generate_pixel", id)
     return iter
@@ -476,8 +476,7 @@ def set_pixel(app, xp, yp, value):
     # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
     #     fail("Bad set_pixel(" + str(xp) + "," + str(yp) + ") call")
 
-    index = yp * app['map_width'] + xp
-    app['map'][index] = value
+    app['map'][yp * app['map_width'] + xp] = value
     end_time(app, "set_pixel", id)
 
 def get_pixel(app, xp, yp):
@@ -486,8 +485,7 @@ def get_pixel(app, xp, yp):
     # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
     #     fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
     
-    index = yp * app['map_width'] + xp
-    value = app['map'][index]
+    value = app['map'][yp * app['map_width'] + xp]
 
     end_time(app, "get_pixel", id)
     return value
@@ -544,7 +542,7 @@ def render_display(app):
         for x in range(DISPLAY_WIDTH):            
             # Get color from single pixel
             if DISPLAY_WIDTH == app['map_width']:
-                iter = get_pixel(app, osx, osy)
+                iter = app['map'][osy * app['map_width'] + osx] #get_pixel(app, osx, osy)
                 rgb = get_gradient_rgb(app, iter)
                 color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
 
@@ -553,7 +551,7 @@ def render_display(app):
                 samples = []
                 for offy in range(app["oversample_range"]):
                     for offx in range(app["oversample_range"]):  
-                        iter = get_pixel(app, osx + offx , osy + offy)
+                        iter = app['map'][(osy + offy) * app['map_width'] + osx + offx] # iter = get_pixel(app, osx + offx , osy + offy)
                         samples.append(iter)
 
                 rgbs = []
