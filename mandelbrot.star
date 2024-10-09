@@ -78,8 +78,6 @@ def main(config):
     app['max_pixel_x'] = app['map_width'] - 1                  # Maximum sample for x
     app['max_pixel_y'] = app['map_height'] - 1                 # Maximum sample for y
 
-    # print("Display:", DISPLAY_WIDTH, DISPLAY_HEIGHT, "MapSize:", app['map_width'], app['map_height'], "MaxPixel:", app['max_pixel_x'], app['max_pixel_y'])
-
     # Generate the animation with all frames
     frames = get_animation_frames(app)
 
@@ -387,55 +385,67 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
         dxm, dym = float(current_set['x2'] - current_set['x1']) / float(dxp), float(current_set['y2'] - current_set['y1']) / float(dyp)
         end_time(app, "generate_mandelbrot_area_dmdp", dmdp_id)
 
+        # A small box can be filled in with the same color if the corners are identical
+        done = False
+        if dxp <= 6 and dyp <= 6:
+            iter1 = generate_pixel(app, current_pix['x1'], current_pix['y1'], current_set['x1'], current_set['y1'], iter_limit)
+            iter2 = generate_pixel(app, current_pix['x2'], current_pix['y2'], current_set['x2'], current_set['y2'], iter_limit)
+            iter3 = generate_pixel(app, current_pix['x1'], current_pix['y2'], current_set['x1'], current_set['y2'], iter_limit)
+            iter4 = generate_pixel(app, current_pix['x2'], current_pix['y1'], current_set['x2'], current_set['y1'], iter_limit)
+            if iter1 == iter2 and iter2 == iter3 and iter3 == iter4:
+                flood_fill(app, current_pix, iter1)
+                done = True
+
         # A border with the same iterations can be filled with the same color
-        iter = generate_line_opt(app, -1, alt(current_pix, 'y2', current_pix['y1']), alt(current_set, 'y2', current_set['y1']), iter_limit)
-        if iter != False:
-            iter = generate_line_opt(app, iter, alt(current_pix, 'y1', current_pix['y2']), alt(current_set, 'y1', current_set['y2']), iter_limit)
-        if iter != False:
-            iter = generate_line_opt(app, iter, alt(current_pix, 'x2', current_pix['x1']), alt(current_set, 'x2', current_set['x1']), iter_limit)
-        if iter != False:
-            iter = generate_line_opt(app, iter, alt(current_pix, 'x1', current_pix['x2']), alt(current_set, 'x1', current_set['x2']), iter_limit)
-        if iter != False:
-            flood_fill(app, current_pix, iter)
+        if not done:
+            iter = generate_line_opt(app, -1, alt(current_pix, 'y2', current_pix['y1']), alt(current_set, 'y2', current_set['y1']), iter_limit)
+            if iter != False:
+                iter = generate_line_opt(app, iter, alt(current_pix, 'y1', current_pix['y2']), alt(current_set, 'y1', current_set['y2']), iter_limit)
+            if iter != False:
+                iter = generate_line_opt(app, iter, alt(current_pix, 'x2', current_pix['x1']), alt(current_set, 'x2', current_set['x1']), iter_limit)
+            if iter != False:
+                iter = generate_line_opt(app, iter, alt(current_pix, 'x1', current_pix['x2']), alt(current_set, 'x1', current_set['x2']), iter_limit)
+            if iter != False:
+                flood_fill(app, current_pix, iter)
+                done = True
 
-        else:
-            # Perform vertical split
-            if dyp >= 3 and dyp >= dxp:
-                split_id = start_time(app, "generate_mandelbrot_area_split")
+        # Perform vertical split
+        if not done and dyp >= 3 and dyp >= dxp:
+            split_id = start_time(app, "generate_mandelbrot_area_split")
 
-                splityp = int(dyp / 2)
-                syp_above = splityp + current_pix['y1']
-                syp_below = syp_above + 1
-                sym_above = current_set['y1'] + splityp * dym
-                sym_below = current_set['y1'] + (splityp + 1) * dym
+            splityp = int(dyp / 2)
+            syp_above = splityp + current_pix['y1']
+            syp_below = syp_above + 1
+            sym_above = current_set['y1'] + splityp * dym
+            sym_below = current_set['y1'] + (splityp + 1) * dym
 
-                end_time(app, "generate_mandelbrot_area_split", split_id)
 
-                # Add sub-regions to the stack
-                stack.append((alt(current_pix, 'y1', syp_below), alt(current_set, 'y1', sym_below)))
-                stack.append((alt(current_pix, 'y2', syp_above), alt(current_set, 'y2', sym_above)))
+            # Add sub-regions to the stack
+            stack.append((alt(current_pix, 'y1', syp_below), alt(current_set, 'y1', sym_below)))
+            stack.append((alt(current_pix, 'y2', syp_above), alt(current_set, 'y2', sym_above)))
+            end_time(app, "generate_mandelbrot_area_split", split_id)
 
-            # Perform horizontal split
-            elif dxp >= 3 and dyp >= 3:
-                split_id = start_time(app, "generate_mandelbrot_area_split")
-                splitxp = int(dxp / 2)
-                sxp_left = splitxp + current_pix['x1']
-                sxp_right = sxp_left + 1
-                sxm_left = current_set['x1'] + splitxp * dxm
-                sxm_right = current_set['x1'] + (splitxp + 1) * dxm
-                end_time(app, "generate_mandelbrot_area_split", split_id)
+        # Perform horizontal split
+        elif not done and dxp >= 3 and dyp >= 3:
+            split_id = start_time(app, "generate_mandelbrot_area_split")
+            splitxp = int(dxp / 2)
+            sxp_left = splitxp + current_pix['x1']
+            sxp_right = sxp_left + 1
+            sxm_left = current_set['x1'] + splitxp * dxm
+            sxm_right = current_set['x1'] + (splitxp + 1) * dxm
+            end_time(app, "generate_mandelbrot_area_split", split_id)
 
-                # Add sub-regions to the stack
-                stack.append((alt(current_pix, 'x1', sxp_right), alt(current_set, 'x1', sxm_right)))
-                stack.append((alt(current_pix, 'x2', sxp_left), alt(current_set, 'x2', sxm_left)))
+            # Add sub-regions to the stack
+            stack.append((alt(current_pix, 'x1', sxp_right), alt(current_set, 'x1', sxm_right)))
+            stack.append((alt(current_pix, 'x2', sxp_left), alt(current_set, 'x2', sxm_left)))
 
-            # This is a small area with differing iterations, calculate/mark them individually
-            else:
-                final_generate_id = start_time(app, "generate_mandelbrot_area final_generate_pixel")
-                for offy in range(0, dyp + 1):
-                    for offx in range(0, dxp + 1):
-                        generate_pixel(app, current_pix['x1'] + offx, current_pix['y1'] + offy, current_set['x1'] + (dxm * offx), current_set['y1'] + (dym * offy), iter_limit)
-                end_time(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
+        # This is a small area with differing iterations, calculate/mark them individually
+        elif not done:
+            final_generate_id = start_time(app, "generate_mandelbrot_area final_generate_pixel")
+            for offy in range(0, dyp + 1):
+                for offx in range(0, dxp + 1):
+                    generate_pixel(app, current_pix['x1'] + offx, current_pix['y1'] + offy, current_set['x1'] + (dxm * offx), current_set['y1'] + (dym * offy), iter_limit)
+            end_time(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
 
     end_time(app, "generate_mandelbrot_area", id)
 
