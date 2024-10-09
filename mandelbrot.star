@@ -177,6 +177,7 @@ def main(config):
     app["max_pixel_y"] = app["map_height"] - 1  # Maximum sample for y
 
     # Determine what POI to zoom onto
+    app['target'] = 0,0
     poi_type = config.str("poi", "search")
     if poi_type == "search":
         poi_id = timer_start(app, "poi")
@@ -188,7 +189,7 @@ def main(config):
         popular = POPULAR_POI[random.number(0, len(POPULAR_POI))]
         app["target"] = popular[0], popular[1]
     else:
-        err("Unrecognized POI type: {}".format(poi_type))
+        return err("Unrecognized POI type: {}".format(poi_type))
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
@@ -787,11 +788,10 @@ def poi_options(type):
 
 def err(msg):
     return render.Root(
-        render.Marquee(
-            width = 64,
-            child = render.Text(msg),
-            offset_start = 5,
-            offset_end = 32,
+        render.WrappedText(
+            content=msg,
+            width=64,
+            color="#f00",
         ),
     )
 
