@@ -32,7 +32,7 @@ MAX_INT = int(math.pow(2, 53))                      # Guesstimate for Starlark m
 BLACK_PIXEL = render.Box(width=1, height=1, color=BLACK_COLOR)                  # Pregenerated 1x1 pixel black box
 
 def main(config):
-    random.seed(4)
+    random.seed(5)
     app = {"config": config}
     
     # milliseconds per frame; for FPS, use value = 1000/fps
@@ -68,6 +68,10 @@ def main(config):
     elif oversampling == '4x':
         app['oversample_range'] = 4
         app['oversample_multiplier'] = 4
+        app['oversample_offset'] = 0
+    elif oversampling == '8x':
+        app['oversample_range'] = 8
+        app['oversample_multiplier'] = 8
         app['oversample_offset'] = 0
     else: 
         return err("Unknown oversampling value: %s" % oversampling)        
@@ -627,9 +631,10 @@ def get_schema():
                 default="mini",
                 options=[
                     schema.Option(value="none", display="None"),
-                    schema.Option(value="mini", display="Mini AA"),
-                    schema.Option(value="2x", display="2X AA"),
-                    schema.Option(value="4x", display="4X AA"),
+                    schema.Option(value="mini", display="Mini AA (slow)"),
+                    schema.Option(value="2x", display="2X AA (slower)"),
+                    schema.Option(value="4x", display="4X AA (much slower)"),
+                    schema.Option(value="8x", display="8X AA (imagine even slower)"),
                 ]        
             ),
             schema.Dropdown(
@@ -669,6 +674,11 @@ def err(msg):
         )
     )
 
+
+
+###
+# TIMERS
+###
 
 def start_time(app, category):
     if "profiling" not in app:
