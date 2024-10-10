@@ -14,12 +14,12 @@ load("time.star", "time")
 
 DEF_ZOOM_GROWTH = "1.04"  # 1 = no zoom in, 1.1 = 10% zoom per frame
 
-MIN_ITER = 30  # minimum iterations, raise if initial zoom is > 1
+MIN_ITER = 300  # minimum iterations, raise if initial zoom is > 1
 ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
-NUM_GRADIENT_STEPS = 32  # Higher = more color variation
+NUM_GRADIENT_STEPS = 64  # Higher = more color variation
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
 MAX_POI_SAMPLES = 100000  # Number of random points to check for POI-worthiness
 CTRX, CTRY = -0.75, 0  # mandelbrot center
@@ -396,13 +396,13 @@ def blend_rgbs(*rgbs):
 def random_color_tuple():
     return (random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL))
 
+
 def get_random_gradient(app):
     id = timer_start(app, "get_random_gradient")
     pal_type = app["palette"]
     print("Generating {} gradient".format(pal_type))
 
     color = [0, 0, 0]
-    half_range = MAX_COLOR_CHANNEL / 2.0
     primary_channel, channel2, channel3 = 0, 0, 0
 
     if pal_type == 'random':
@@ -420,21 +420,30 @@ def get_random_gradient(app):
             
     gradient = []
     for step in range(0, NUM_GRADIENT_STEPS):
-        gradient.append(tuple(color))
-        
         if pal_type == "random":
+            gradient.append(tuple(color))
             color = alter_color_rgb(color)
         else:
-            # Use a sine wave to smooth the transition
-            phase = step / NUM_GRADIENT_STEPS * math.pi
-            intensity = (math.sin(phase) + 1) / 2 * MAX_COLOR_CHANNEL  # smooth transition between 0 and MAX_COLOR_CHANNEL
+            # Deterministic calculation for the primary channel using sine wave
+            phase = step / NUM_GRADIENT_STEPS * 2 * math.pi  # Full cycle for primary channel
+            intensity = (math.sin(phase) + 1) / 2 * MAX_COLOR_CHANNEL
 
+            # Set the primary channel with smooth transition
             color[primary_channel] = int(intensity)
-            color[channel2] = rnd(app) * color[primary_channel]
-            color[channel3] = rnd(app) * color[primary_channel]
+
+            # Use independent frequencies for the secondary and tertiary channels
+            freq2 = NUM_GRADIENT_STEPS * 0.75  # Slightly faster frequency for channel2
+            freq3 = NUM_GRADIENT_STEPS * 0.5  # Even faster frequency for channel3
+
+            # Apply independent sine variations for the secondary and tertiary channels
+            color[channel2] = int(((math.sin(step / freq2 * 2 * math.pi) + 1) / 2) * MAX_COLOR_CHANNEL * 0.6)  # Adjust scale to 60%
+            color[channel3] = int(((math.sin(step / freq3 * 2 * math.pi) + 1) / 2) * MAX_COLOR_CHANNEL * 0.4)  # Adjust scale to 40%
+
+            gradient.append(tuple(color))
 
     timer_stop(app, "get_random_gradient", id)
     return gradient
+
 
 
 # At least one channel flipped, another randomized
