@@ -401,12 +401,12 @@ def get_random_gradient(app):
     pal_type = app["palette"]
     print("Generating {} gradient".format(pal_type))
 
-    color = [0,0,0]
+    color = [0, 0, 0]
     half_range = MAX_COLOR_CHANNEL / 2.0
     primary_channel, channel2, channel3 = 0, 0, 0
 
     if pal_type == 'random':
-        list(random_color_tuple())
+        color = list(random_color_tuple())
     else:
         if pal_type == 'red':
             primary_channel = 0
@@ -419,19 +419,23 @@ def get_random_gradient(app):
         channel3 = (primary_channel + 2) % 3
             
     gradient = []
-    for _ in range(0, NUM_GRADIENT_STEPS):
+    for step in range(0, NUM_GRADIENT_STEPS):
         gradient.append(tuple(color))
+        
         if pal_type == "random":
             color = alter_color_rgb(color)
         else:
-            if color[primary_channel] >= half_range:
-                color[primary_channel] = int(rnd(app) * half_range)
-            else:
-                color[primary_channel] = int(rnd(app) * half_range + half_range)
+            # Use a sine wave to smooth the transition
+            phase = step / NUM_GRADIENT_STEPS * math.pi
+            intensity = (math.sin(phase) + 1) / 2 * MAX_COLOR_CHANNEL  # smooth transition between 0 and MAX_COLOR_CHANNEL
+
+            color[primary_channel] = int(intensity)
             color[channel2] = rnd(app) * color[primary_channel]
             color[channel3] = rnd(app) * color[primary_channel]
+
     timer_stop(app, "get_random_gradient", id)
     return gradient
+
 
 # At least one channel flipped, another randomized
 def alter_color_rgb(color):
