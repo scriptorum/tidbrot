@@ -125,7 +125,7 @@ POPULAR_POI = [
 ]
 
 def main(config):
-    random.seed(5)
+    # random.seed(5)
     app = {"config": config}
 
     # milliseconds per frame; for FPS, use value = 1000/fps
@@ -177,8 +177,8 @@ def main(config):
     app["max_pixel_y"] = app["map_height"] - 1  # Maximum sample for y
 
     # Determine what POI to zoom onto
-    app['target'] = 0,0
-    app['zoom_level'] = rnd(app) * 5 + 1
+    app["target"] = 0, 0
+    app["zoom_level"] = rnd(app) * 5 + 1
     poi_type = config.str("poi", "search")
     if poi_type == "search":
         poi_id = timer_start(app, "poi")
@@ -186,7 +186,7 @@ def main(config):
         app["desc"] = "random"
         timer_stop(app, "poi", poi_id)
     elif poi_type == "specific":
-        app["target"] = float(config.str("poi_coord_real",0)), float(config.str("poi_coord_imaginary",0))
+        app["target"] = float(config.str("poi_coord_real", 0)), float(config.str("poi_coord_imaginary", 0))
         app["desc"] = "your coordinates"
     elif poi_type == "popular":
         popular = POPULAR_POI[random.number(0, len(POPULAR_POI))]
@@ -195,8 +195,13 @@ def main(config):
         app["desc"] = popular[3]
     else:
         return err("Unrecognized POI type: {}".format(poi_type))
-    print("POI target:", app['target'][0], app['target'][1], "Desc:", app['desc'])
-    print("Zoom Level:", app['zoom_level'])
+    print("POI target:", app["target"][0], app["target"][1], "Desc:", app["desc"])
+    print("Zoom Level:", app["zoom_level"])
+
+    app['palette'] = config.str('palette', 'random')
+    if app['palette'] != 'random' and app['palette'] != 'red' and app['palette'] != 'green' and app['palette'] != 'blue':
+        return err("Unrecognized palette type: {}".format(app['palette']))
+    print("Color Palette:", app['palette'])
 
     # Generate the animation with all frames
     frames = get_animation_frames(app)
@@ -228,6 +233,15 @@ def get_animation_frames(app):
 
     actual_max_iter = int(MIN_ITER + app["zoom_level"] / app["zoom_growth"] * ZOOM_TO_ITER)
     print("Calculated max iterations:" + str(app["max_iter"]) + " Actual:" + str(actual_max_iter))
+    print(
+        "Link:",
+        "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
+            app["target"][0],
+            app["target"][1],
+            actual_max_iter,
+            app["max_zoom"] * 1000,
+        ),
+    )
 
     return frames
 
@@ -383,14 +397,40 @@ def random_color_tuple():
     return (random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL))
 
 def get_random_gradient(app):
-    print("Generating gradient")
+    id = timer_start(app, "get_random_gradient")
+    pal_type = app["palette"]
+    print("Generating {} gradient".format(pal_type))
+
+    color = [0,0,0]
+    half_range = MAX_COLOR_CHANNEL / 2.0
+    primary_channel, channel2, channel3 = 0, 0, 0
+
+    if pal_type == 'random':
+        list(random_color_tuple())
+    else:
+        if pal_type == 'red':
+            primary_channel = 0
+        elif pal_type == 'green':
+            primary_channel = 1
+        elif pal_type == 'blue':
+            primary_channel = 2
+        color[primary_channel] = MAX_COLOR_CHANNEL
+        channel2 = (primary_channel + 1) % 3
+        channel3 = (primary_channel + 2) % 3
+            
     gradient = []
-    color = random_color_tuple()
     for _ in range(0, NUM_GRADIENT_STEPS):
-        id = timer_start(app, "alter_color_rgb")
-        color = alter_color_rgb(color)
-        timer_stop(app, "alter_color_rgb", id)
-        gradient.append(color)
+        gradient.append(tuple(color))
+        if pal_type == "random":
+            color = alter_color_rgb(color)
+        else:
+            if color[primary_channel] >= half_range:
+                color[primary_channel] = int(rnd(app) * half_range)
+            else:
+                color[primary_channel] = int(rnd(app) * half_range + half_range)
+            color[channel2] = rnd(app) * color[primary_channel]
+            color[channel3] = rnd(app) * color[primary_channel]
+    timer_stop(app, "get_random_gradient", id)
     return gradient
 
 # At least one channel flipped, another randomized
@@ -717,7 +757,7 @@ def get_schema():
                 name = "Oversampling",
                 desc = "Oversampling Method",
                 icon = "border-none",
-                default = "mini",
+                default = "none",
                 options = [
                     schema.Option(value = "none", display = "None"),
                     schema.Option(value = "mini", display = "Mini AA (slow)"),
@@ -751,6 +791,35 @@ def get_schema():
                 default = "150",
             ),
             schema.Dropdown(
+                id = "palette",
+                name = "Palette",
+                desc = "Color palette/gradient",
+                default = "random",
+                icon = "palette",
+                options = [
+                    schema.Option(value = "random", display = "Random"),
+                    schema.Option(value = "red", display = "Red-ish"),
+                    schema.Option(value = "blue", display = "Blue-ish"),
+                    schema.Option(value = "green", display = "Green-ish"),
+                ],
+            ),
+            schema.Dropdown(
+                id = "quantize",
+                name = "Color Quantization",
+                desc = "Shades per color channel",
+                icon = "umbrella_beach",
+                default = "8",
+                options = [
+                    schema.Option(value = "4", display = "4 shades"),
+                    schema.Option(value = "8", display = "8 shades"),
+                    schema.Option(value = "16", display = "16 shades"),
+                    schema.Option(value = "32", display = "32 shades"),
+                    schema.Option(value = "64", display = "64 shades"),
+                    schema.Option(value = "128", display = "128 shades"),
+                    schema.Option(value = "255", display = "256 shades"),
+                ],
+            ),
+            schema.Dropdown(
                 id = "poi",
                 name = "POI",
                 desc = "Point of interest (where to focus)",
@@ -763,7 +832,7 @@ def get_schema():
                 ],
             ),
             schema.Generated(
-                id = "poi",
+                id = "poi_options",
                 source = "poi",
                 handler = poi_options,
             ),
@@ -788,16 +857,26 @@ def poi_options(type):
                 default = "0.0",
             ),
         ]
+    elif type == "search":
+        return [
+            schema.Text(
+                id = "poi_points",
+                name = "POI Points",
+                desc = "Number of random points to search",
+                icon = "hashtag",
+                default = "10000",
+            ),
+        ]
 
-    # Search and Popular have no custom options
+    # Popular have no custom options
     return []
 
 def err(msg):
     return render.Root(
         render.WrappedText(
-            content=msg,
-            width=64,
-            color="#f00",
+            content = msg,
+            width = 64,
+            color = "#f00",
         ),
     )
 
