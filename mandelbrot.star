@@ -125,7 +125,9 @@ POPULAR_POI = [
 ]
 
 def main(config):
-    # random.seed(5)
+    seed = time.now().unix
+    random.seed(seed)
+    print ("Using random seed:", seed)
     app = {"config": config}
 
     # milliseconds per frame; for FPS, use value = 1000/fps
@@ -139,7 +141,6 @@ def main(config):
 
     # Zoom growth 1.01 = 1% zoom in per frame
     app["zoom_growth"] = float(config.str("zoom", DEF_ZOOM_GROWTH))
-    app["max_zoom"] = math.pow(app["zoom_growth"], app["max_frames"])
     print("Zoom:", app["zoom_growth"])
 
     # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
@@ -178,7 +179,7 @@ def main(config):
 
     # Determine what POI to zoom onto
     app["target"] = 0, 0
-    app["zoom_level"] = rnd(app) * 5 + 1
+    app["zoom_level"] = rnd(app) * 1000
     poi_type = config.str("poi", "search")
     if poi_type == "search":
         poi_id = timer_start(app, "poi")
@@ -239,7 +240,7 @@ def get_animation_frames(app):
             app["target"][0],
             app["target"][1],
             actual_max_iter,
-            app["max_zoom"] * 1000,
+            app["zoom_level"] * 600, # approx ratio of my zoom to theirs
         ),
     )
 
@@ -256,7 +257,8 @@ def float_range(start, end, num_steps, inclusive = False):
 
 def find_point_of_interest(app):
     print("Determining point of interest")
-    max_iter = int(MIN_ITER + app["max_zoom"] * ZOOM_TO_ITER)
+    max_zoom = math.pow(app["zoom_growth"], app["max_frames"]) + app['zoom_level']
+    max_iter = int(MIN_ITER + max_zoom * ZOOM_TO_ITER)
     x, y, best = find_poi_near(app, CTRX, CTRY, 0.0, (MAXX - MINX), MAX_POI_SAMPLES, max_iter)
     print("Settled on POI:", x, y, "escape:", best)
     return x, y
@@ -781,8 +783,8 @@ def get_schema():
             ),
             schema.Dropdown(
                 id = "zoom",
-                name = "Zoom",
-                desc = "Amount to zoom in per frame",
+                name = "Zoom Anim",
+                desc = "Amount to magnification per frame",
                 icon = "magnifying-glass-plus",
                 default = DEF_ZOOM_GROWTH,
                 options = [
@@ -869,6 +871,13 @@ def poi_options(type):
                 icon = "hashtag",
                 default = "0.0",
             ),
+            schema.Text(
+                id = "zoom_level",
+                name = "Zoom Level",
+                desc = "Initial zoom level",
+                icon = "hashtag",
+                default = "1.0",
+            ),
         ]
     elif type == "search":
         return [
@@ -879,7 +888,21 @@ def poi_options(type):
                 icon = "hashtag",
                 default = "10000",
             ),
-        ]
+            schema.Text(
+                id = "zoom_level_min",
+                name = "Zoom Min",
+                desc = "Initial magnification (at minimum)",
+                icon = "hashtag",
+                default = "10.0",
+            ),
+            schema.Text(
+                id = "zoom_level_mult",
+                name = "Zoom Random",
+                desc = "Additional magnification (random amount)",
+                icon = "hashtag",
+                default = "1000.0",
+            ),
+        ]        
 
     # Popular have no custom options
     return []
