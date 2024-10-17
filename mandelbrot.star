@@ -14,7 +14,7 @@ load("time.star", "time")
 
 DEF_ZOOM_GROWTH = "1.04"  # 1 = no zoom in, 1.1 = 10% zoom per frame
 
-MIN_ITER = 300  # minimum iterations, raise if initial zoom is > 1
+MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
 ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
