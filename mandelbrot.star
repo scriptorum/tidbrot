@@ -12,11 +12,9 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-DEF_ZOOM_GROWTH = "1.04"  # 1 = no zoom in, 1.1 = 10% zoom per frame
-
 MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
-ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, less accuracy
+ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
 NUM_GRADIENT_STEPS = 64  # Higher = more color variation
@@ -29,100 +27,6 @@ CHANNEL_MULT = 255.9999 / MAX_COLOR_CHANNEL  # Conversion from quantized value t
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
-POPULAR_POI = [
-    (-0.75, 0.0, 1, "Main cardioid"),
-    (-1.25, 0.0, 1.2, "Second major bulb"),
-    (-0.743643887037151, 0.13182590420533, 500, "Seahorse Valley"),
-    (-0.39054, -0.58679, 150, "Elephant Valley"),
-    (-0.1015, 0.956, 200, "Spirals"),
-    (-1.749, 0.0, 50, "Smaller bulbs"),
-    (-0.74719, 0.107, 1000, "Double spiral"),
-    (-1.25, 0.2, 50, "Mini Mandelbrot"),
-    (-1.768, 0.05, 75, "Period 3 bulb"),
-    (-0.1583, 1.0327, 300, "The Needle"),
-    (0.42884, -0.231345, 1000, "Zoom 2 center"),
-    (-1.62917, -0.0203968, 800, "Zoom 3 center"),
-    (-0.761574, -0.0847596, 1000, "Zoom 4 spirals"),
-    (-0.7746806106269039, -0.1374168856037867, 50000, "Fine zoom location"),
-    (-1.041804831, 0.0, 50, "Alternate zoom point"),
-    (0.001643721971153, 0.822467633298876, 25000, "Fine details in Seahorse valley"),
-    (-0.1015, 0.6514, 400, "Branch points"),
-    (-0.75, 0.25, 100, "Smaller bulbs near main set"),
-    (-1.6744096740931856, -0.0000226283716705, 50000, "Mini Mandelbrot copy zoom"),
-    (-0.170337, -1.06506, 500, "Tendrils"),
-    (-1.256344056, 0.394478087, 100, "Smaller bulb"),
-    (0.274054951, 0.48274325, 400, "Symmetrical spirals"),
-    (-0.20172077, 0.541856, 1000, "Fine tendrils"),
-    (0.401155, 0.327756, 150, "Mini-Mandelbrot"),
-    (-0.222216, 0.706614, 1000, "Close-up tendrils"),
-    (-1.674, 0.0002, 500, "Mini-bulbs along cardioid"),
-    (0.254671, 0.490578, 1000, "Interior spirals"),
-    (-0.1387, 0.6491, 750, "Tendrils near bulb"),
-    (-0.1583, 1.032, 400, "Needle zoom"),
-    (-0.78018, -0.14775, 4000, "Sub-mini Mandelbrot"),
-    (0.28346, 0.53056, 150, "Smaller tendrils"),
-    (-0.163, 1.032, 1000, "Needle extension"),
-    (-0.1, 0.645, 150, "Smaller mini-Mandelbrot"),
-    (0.34, -0.02, 300, "Spiral near main cardioid"),
-    (-1.255, 0.25, 200, "Near 1st small bulb"),
-    (0.275, 0.5, 300, "Spiral system near Seahorse"),
-    (-0.6, 0.6, 100, "Detached bulb in orbit"),
-    (-1.4, 0.0, 200, "Alternate cardioid region"),
-    (-0.752, 0.1, 300, "Seahorse tail region"),
-    (-0.66, 0.4, 400, "Fine structure"),
-    (-1.35, 0.1, 200, "Secondary small bulb"),
-    (-0.733, 0.259, 300, "Edge of Seahorse valley"),
-    (-0.799, -0.17, 400, "Transition zone to tendrils"),
-    (-0.1744, -1.065, 600, "Detailed tendril branch"),
-    (0.0056434, 0.8221, 25000, "Highly intricate fine zoom"),
-    (-1.02, 0.24, 400, "Alternate bulb offshoot"),
-    (-0.13243, 1.03218, 1000, "Tiny needle detail"),
-    (-0.36, 0.642, 800, "Lower tendril structure"),
-    (0.23415, 0.674, 700, "Spiral in mini-Mandelbrot"),
-    (-0.46, 0.743, 1000, "Further tendril system"),
-    (0.444, 0.305, 150, "Interior Julia-like spirals"),
-    (-1.2879, 0.3, 400, "Zoom to complex bulb structures"),
-    (-0.688, 0.39, 1000, "Seahorse arm detail"),
-    (0.25, 0.71, 300, "Upper mini-bulbs"),
-    (-1.562, -0.0001, 50, "Period 3 bulbs"),
-    (-0.1396, 0.64, 500, "Major tendril system"),
-    (0.40064, 0.3305, 1000, "Spiral zoom detail"),
-    (-0.7934, 0.164, 400, "Seahorse tail sub-structure"),
-    (-0.95, 0.24, 150, "Internal fine bulbs"),
-    (0.54, -0.2, 300, "Julia seed detail near boundary"),
-    (-0.8, 0.27, 150, "Seahorse arms"),
-    (-1.03, 0.27, 300, "Lower bulb structure"),
-    (0.423, 0.403, 1000, "Interior Julia-like spirals"),
-    (-0.3051, 0.7035, 700, "Fine spiral arm"),
-    (0.2034, 0.6943, 3000, "Complex zoom in Seahorse"),
-    (-0.5, 0.75, 200, "Lower Seahorse tendrils"),
-    (-0.4555, 0.7954, 500, "Alternate Seahorse zooms"),
-    (0.3844, 0.4505, 2000, "Sub-mini spiral bulbs"),
-    (-0.6235, 0.312, 1500, "Arm of major bulb"),
-    (-1.21, 0.15, 500, "Period 2 bulbs"),
-    (0.19, 0.78, 300, "Branch spirals"),
-    (-0.5888, 0.4095, 400, "Period 2 offshoots"),
-    (0.3425, 0.4763, 1500, "Arm-like fine zoom"),
-    (-1.2122, 0.25, 500, "Alternate arm"),
-    (-0.552, 0.321, 1000, "Seahorse fine zoom"),
-    (-0.1789, -1.023, 700, "Tendrils zoom branch"),
-    (0.2816, 0.4513, 1500, "Interior zoom bulbs"),
-    (-1.3382, 0.131, 300, "Mini-bulb branch"),
-    (-0.422, 0.555, 1000, "Detailed spirals"),
-    (0.425, 0.63, 500, "Internal Seahorse"),
-    (-0.489, 0.756, 800, "Sub-structure zoom"),
-    (-1.344, 0.231, 500, "Period 3 spiral zoom"),
-    (-0.173, 0.589, 2000, "Lower sub-tendril zooms"),
-    (0.4064, 0.355, 1200, "Closeup Julia-like spirals"),
-    (-0.1435, 0.774, 1000, "Upper mini-tendrils"),
-    (-1.1, 0.39, 500, "Period 3 bulb detail"),
-    (-0.462, 0.734, 10, "Alternate Seahorse branch"),
-    (-0.711, 0.41, 300, "Smaller bulbs"),
-    (-1.4, 0.1, 200, "Mini-bulb branch detail"),
-    (-1.0496, 0.0274, 4000, "Needle upper fine structure"),
-    (-0.167, 0.739, 3000, "Needle extension in Seahorse"),
-    (0.502, 0.309, 1000, "Sub-bulbs near mini set"),
-]
 
 def main(config):
     seed = time.now().unix
@@ -130,23 +34,10 @@ def main(config):
     print ("Using random seed:", seed)
     app = {"config": config}
 
-    # milliseconds per frame; for FPS, use value = 1000/fps
-    frame_duration_ms = config.str("frames", "500")
-    if not frame_duration_ms.isdigit():
-        return err("Must be an integer: {}".format(frame_duration_ms))
-    app["frame_duration_ms"] = int(frame_duration_ms)
-
-    app["max_frames"] = int(15000 / app["frame_duration_ms"])
-    print("Frame MS:", app["frame_duration_ms"])
-
-    # Zoom growth 1.01 = 1% zoom in per frame
-    app["zoom_growth"] = float(config.str("zoom", DEF_ZOOM_GROWTH))
-    print("Zoom:", app["zoom_growth"])
-
     # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
     # MULTIPLIER -->  1 = no or mini AA, 2 = 2AA (2x2=4X samples)
     # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
-    oversampling = config.str("oversampling", "none")
+    oversampling = config.str("oversampling", "8x")
     if oversampling == "none":
         app["oversample_range"] = 1
         app["oversample_multiplier"] = 1
@@ -189,11 +80,6 @@ def main(config):
     elif poi_type == "specific":
         app["target"] = float(config.str("poi_coord_real", 0)), float(config.str("poi_coord_imaginary", 0))
         app["desc"] = "your coordinates"
-    elif poi_type == "popular":
-        popular = POPULAR_POI[random.number(0, len(POPULAR_POI))]
-        app["target"] = popular[0], popular[1]
-        app["zoom_level"] = popular[2]
-        app["desc"] = popular[3]
     else:
         return err("Unrecognized POI type: {}".format(poi_type))
     print("POI target:", app["target"][0], app["target"][1], "Desc:", app["desc"])
@@ -204,42 +90,36 @@ def main(config):
         return err("Unrecognized palette type: {}".format(app['palette']))
     print("Color Palette:", app['palette'])
 
+    app['max_iter'] = int(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER)
+
     # Generate the animation with all frames
-    frames = get_animation_frames(app)
+    frames = get_frames(app)
 
     timer_display(app)
 
     return render.Root(
-        delay = app["frame_duration_ms"],
+        delay = 1500,
         child = render.Box(render.Animation(frames)),
     )
 
-def get_animation_frames(app):
-    app["max_iter"] = int(math.round(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER * math.pow(app["zoom_growth"], app["max_frames"])) + 1)  # Calc max iter -- it's wrong, doesn't include initial zoom
-
+def get_frames(app):
     id = timer_start(app, "get_random_gradient")
     app["gradient"] = get_random_gradient(app)
     timer_stop(app, "get_random_gradient", id)
 
-    # Generate multiple frames for animation
-    print("Generating frames")
+    print("Generating frame")
     frames = list()  # List to store frames of the animation
-    for frame in range(app["max_frames"]):
-        print("Generating frame #" + str(frame), " zoom:", app["zoom_level"])
-        id = timer_start(app, "render_mandelbrot")
-        frame = render_mandelbrot(app, app["target"][0], app["target"][1])
-        timer_stop(app, "render_mandelbrot", id)
-        frames.append(frame)
-        app["zoom_level"] *= app["zoom_growth"]
+    id = timer_start(app, "render_mandelbrot")
+    frame = render_mandelbrot(app, app["target"][0], app["target"][1])
+    timer_stop(app, "render_mandelbrot", id)
+    frames.append(frame)
 
-    actual_max_iter = int(MIN_ITER + app["zoom_level"] / app["zoom_growth"] * ZOOM_TO_ITER)
-    print("Calculated max iterations:" + str(app["max_iter"]) + " Actual:" + str(actual_max_iter))
     print(
         "Link:",
         "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
             app["target"][0],
             app["target"][1],
-            actual_max_iter,
+            app['max_iter'],
             app["zoom_level"] * 600, # approx ratio of my zoom to theirs
         ),
     )
@@ -257,8 +137,7 @@ def float_range(start, end, num_steps, inclusive = False):
 
 def find_point_of_interest(app):
     print("Determining point of interest")
-    max_zoom = math.pow(app["zoom_growth"], app["max_frames"]) + app['zoom_level']
-    max_iter = int(MIN_ITER + max_zoom * ZOOM_TO_ITER)
+    max_iter = int(MIN_ITER + (app['zoom_level'] + 1) * ZOOM_TO_ITER)
     x, y, best = find_poi_near(app, CTRX, CTRY, 0.0, (MAXX - MINX), MAX_POI_SAMPLES, max_iter)
     print("Settled on POI:", x, y, "escape:", best)
     return x, y
@@ -277,7 +156,6 @@ def find_poi_near(app, x, y, esc, depth, num_samples, iter_limit):
 
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
-    # print("map_range v:", v, "first:", min1, max1, "second:", min2, max2)
     return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
 
 # Performs the mandelbrot calculation on a single point
@@ -445,8 +323,6 @@ def get_random_gradient(app):
 
     timer_stop(app, "get_random_gradient", id)
     return gradient
-
-
 
 # At least one channel flipped, another randomized
 def alter_color_rgb(color):
@@ -780,30 +656,6 @@ def get_schema():
                     schema.Option(value = "4x", display = "4X AA (much slower)"),
                     schema.Option(value = "8x", display = "8X AA (imagine even slower)"),
                 ],
-            ),
-            schema.Dropdown(
-                id = "zoom",
-                name = "Zoom Anim",
-                desc = "Amount to magnification per frame",
-                icon = "magnifying-glass-plus",
-                default = DEF_ZOOM_GROWTH,
-                options = [
-                    schema.Option(value = "1.01", display = "1%"),
-                    schema.Option(value = "1.02", display = "2%"),
-                    schema.Option(value = "1.03", display = "3%"),
-                    schema.Option(value = "1.04", display = "4%"),
-                    schema.Option(value = "1.05", display = "5%"),
-                    schema.Option(value = "1.06", display = "6%"),
-                    schema.Option(value = "1.07", display = "7%"),
-                    schema.Option(value = "1.08", display = "8%"),
-                ],
-            ),
-            schema.Text(
-                id = "frames",
-                name = "Frame Rate",
-                desc = "Milliseconds per frame",
-                icon = "clock",
-                default = "150",
             ),
             schema.Dropdown(
                 id = "palette",
