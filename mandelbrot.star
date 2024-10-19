@@ -1,11 +1,3 @@
-#
-# TODO
-# - Derive certain variables from a budgeting system
-#    + Measure the time used to find a POI
-#    + If not a lot of time, display a single frame with high AA
-#    + Otherwise do an animation
-#
-
 load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
@@ -19,9 +11,11 @@ DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
 NUM_GRADIENT_STEPS = 64  # Higher = more color variation
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-MAX_POI_SAMPLES = 100000  # Number of random points to check for POI-worthiness
 CTRX, CTRY = -0.75, 0  # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
+POI_SEARCH_POINTS = 5000
+POI_SEARCH_GRID = 6
+POI_SEARCH_ZOOM = 100
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
@@ -29,7 +23,7 @@ BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregener
 def main(config):
     seed = time.now().unix
     random.seed(seed)
-    print ("Using random seed:", seed)
+    print("Using random seed:", seed)
     app = {"config": config}
 
     # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
@@ -68,13 +62,13 @@ def main(config):
 
     # Determine what POI to zoom onto
     app["target"] = 0, 0
-    app["zoom_level"] = rnd(app) * 1000
+    app["zoom_level"] = rnd() * 1000
+    app["max_iter"] = int(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER)
     poi_type = config.str("poi", "search")
     if poi_type == "search":
-        poi_id = timer_start(app, "poi")
         app["target"] = find_point_of_interest(app)  # Choose a point of interest
+        app["zoom_level"] /= POI_SEARCH_ZOOM
         app["desc"] = "random"
-        timer_stop(app, "poi", poi_id)
     elif poi_type == "specific":
         app["target"] = float(config.str("poi_coord_real", 0)), float(config.str("poi_coord_imaginary", 0))
         app["desc"] = "your coordinates"
@@ -83,17 +77,13 @@ def main(config):
     print("POI target:", app["target"][0], app["target"][1], "Desc:", app["desc"])
     print("Zoom Level:", app["zoom_level"])
 
-    app['palette'] = config.str('palette', 'random')
-    if app['palette'] != 'random' and app['palette'] != 'red' and app['palette'] != 'green' and app['palette'] != 'blue':
-        return err("Unrecognized palette type: {}".format(app['palette']))
-    print("Color Palette:", app['palette'])
-
-    app['max_iter'] = int(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER)
+    app["palette"] = config.str("palette", "random")
+    if app["palette"] != "random" and app["palette"] != "red" and app["palette"] != "green" and app["palette"] != "blue":
+        return err("Unrecognized palette type: {}".format(app["palette"]))
+    print("Color Palette:", app["palette"])
 
     # Generate the animation with all frames
     frames = get_frames(app)
-
-    timer_display(app)
 
     return render.Root(
         delay = 1500,
@@ -101,15 +91,11 @@ def main(config):
     )
 
 def get_frames(app):
-    id = timer_start(app, "get_random_gradient")
     app["gradient"] = get_random_gradient(app)
-    timer_stop(app, "get_random_gradient", id)
 
     print("Generating frame")
     frames = list()  # List to store frames of the animation
-    id = timer_start(app, "render_mandelbrot")
     frame = render_mandelbrot(app, app["target"][0], app["target"][1])
-    timer_stop(app, "render_mandelbrot", id)
     frames.append(frame)
 
     print(
@@ -117,8 +103,8 @@ def get_frames(app):
         "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
             app["target"][0],
             app["target"][1],
-            app['max_iter'],
-            app["zoom_level"] * 600, # approx ratio of my zoom to theirs
+            app["max_iter"],
+            app["zoom_level"] * 600,  # approx ratio of my zoom to theirs
         ),
     )
 
@@ -135,22 +121,36 @@ def float_range(start, end, num_steps, inclusive = False):
 
 def find_point_of_interest(app):
     print("Determining point of interest")
-    max_iter = int(MIN_ITER + (app['zoom_level'] + 1) * ZOOM_TO_ITER)
-    x, y, best = find_poi_near(app, CTRX, CTRY, 0.0, (MAXX - MINX), MAX_POI_SAMPLES, max_iter)
-    print("Settled on POI:", x, y, "escape:", best)
+    x, y, best = find_poi_near(app, CTRX, CTRY, (MAXX - MINX))
+    print("Settled on POI:", x, y, "score:", best)
     return x, y
 
-def find_poi_near(app, x, y, esc, depth, num_samples, iter_limit):
-    bestx, besty, best_escape = x, y, esc
+def find_poi_near(app, ctrx, ctry, depth):
+    bestx, besty, best_score = ctrx, ctry, 0.0
+    eval_depth = depth / POI_SEARCH_ZOOM
+    for _ in range(POI_SEARCH_POINTS):
+        x, y = ctrx + (rnd() - 0.5) * depth, ctry + (rnd() - 0.5) * depth
+        score = evaluate_poi(app, x, y, eval_depth)
+        if score > best_score:
+            bestx, besty, best_score = x, y, score
+    return bestx, besty, best_score
 
-    for _ in range(num_samples):
-        x, y = bestx + (rnd(app) - 0.5) * depth, besty + (rnd(app) - 0.5) * depth
-        _, last_escape = mandelbrot_calc(app, x, y, iter_limit)
-        if last_escape < ESCAPE_THRESHOLD and last_escape > best_escape:
-            bestx, besty, best_escape = x, y, last_escape
-
-    #    print("Best POI so far:", bestx, besty, "escape:", best_escape)
-    return bestx, besty, best_escape
+def evaluate_poi(app, x, y, depth):
+    iter_limit = app["max_iter"]
+    score = 0
+    divisor = depth / POI_SEARCH_GRID
+    half_depth = depth / 2
+    x, y = x - half_depth, y - half_depth
+    newy = y
+    for _ in range(POI_SEARCH_GRID):
+        newx = x
+        for _ in range(POI_SEARCH_GRID):
+            _, last_escape = mandelbrot_calc(newx, newy, iter_limit)
+            if last_escape < ESCAPE_THRESHOLD:
+                score += last_escape
+            newx += divisor
+        newy += divisor
+    return score / (POI_SEARCH_GRID * POI_SEARCH_GRID)
 
 # Map value v from one range to another
 def map_range(v, min1, max1, min2, max2):
@@ -159,9 +159,7 @@ def map_range(v, min1, max1, min2, max2):
 # Performs the mandelbrot calculation on a single point
 # Returns both the escape distance and the number of iterations
 # (cannot exceed iter_limit)
-def mandelbrot_calc(app, x, y, iter_limit):
-    id = timer_start(app, "calc")
-
+def mandelbrot_calc(x, y, iter_limit):
     # Initialize z (zr, zi) and c (cr, ci)
     x2, y2, w = 0.0, 0.0, 0.0
 
@@ -169,7 +167,6 @@ def mandelbrot_calc(app, x, y, iter_limit):
     for iteration in range(1, iter_limit + 1):
         # Check if the point has escaped
         if x2 + y2 > ESCAPE_THRESHOLD:
-            timer_stop(app, "calc", id)
             return (iteration, x2 + y2)
 
         # Calculate new zr and zi (x and y in pseudocode)
@@ -182,7 +179,6 @@ def mandelbrot_calc(app, x, y, iter_limit):
         w = (zr + zi) * (zr + zi)
 
     # End timing and return the max iteration and the final distance if escape condition is not met
-    timer_stop(app, "calc", id)
     return (iter_limit, x2 + y2)
 
 def int_to_hex(n):
@@ -196,12 +192,9 @@ def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
 def get_gradient_color(app, iter):
-    id = timer_start(app, "get_gradient_color")
-
     r, g, b = get_gradient_rgb(app, iter)
     color = rgb_to_hex(r, g, b)
 
-    timer_stop(app, "get_gradient_color", id)
     return color
 
 def dump(app):
@@ -274,28 +267,24 @@ def blend_rgbs(*rgbs):
 def random_color_tuple():
     return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
 
-
 def get_random_gradient(app):
-    id = timer_start(app, "get_random_gradient")
     pal_type = app["palette"]
-    print("Generating {} gradient".format(pal_type))
-
     color = [0, 0, 0]
     primary_channel, channel2, channel3 = 0, 0, 0
 
-    if pal_type == 'random':
+    if pal_type == "random":
         color = list(random_color_tuple())
     else:
-        if pal_type == 'red':
+        if pal_type == "red":
             primary_channel = 0
-        elif pal_type == 'green':
+        elif pal_type == "green":
             primary_channel = 1
-        elif pal_type == 'blue':
+        elif pal_type == "blue":
             primary_channel = 2
         color[primary_channel] = 255
         channel2 = (primary_channel + 1) % 3
         channel3 = (primary_channel + 2) % 3
-            
+
     gradient = []
     for step in range(0, NUM_GRADIENT_STEPS):
         if pal_type == "random":
@@ -319,7 +308,6 @@ def get_random_gradient(app):
 
             gradient.append(tuple(color))
 
-    timer_stop(app, "get_random_gradient", id)
     return gradient
 
 # At least one channel flipped, another randomized
@@ -339,7 +327,6 @@ def alter_color_rgb(color):
 # compare all iterations against this value
 # Returns the number of iterations, or False if they are not all the same
 def generate_line_opt(app, match_iter, pix, set, max_iter):
-    id = timer_start(app, "generate_line_opt")
     xm_step, ym_step = 0, 0
 
     # Determine whether the line is vertical or horizontal
@@ -372,9 +359,7 @@ def generate_line_opt(app, match_iter, pix, set, max_iter):
             xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
-        cache_id = timer_start(app, "generate_line_opt/generate_pixel")
         cache = generate_pixel(app, xp, yp, xm, ym, max_iter)
-        timer_stop(app, "generate_line_opt/generate_pixel", cache_id)
 
         # Initialize match_iter on first iteration
         if match_iter == -1:
@@ -382,11 +367,9 @@ def generate_line_opt(app, match_iter, pix, set, max_iter):
 
             # Bail early: Not all iterations along the line were identical
         elif match_iter != cache:
-            timer_stop(app, "generate_line_opt", id)
             return False
 
     # All iterations along the line were identical
-    timer_stop(app, "generate_line_opt", id)
     return match_iter
 
 # Copies an object and alters one field to a new value
@@ -398,16 +381,11 @@ def alt(obj, field, value):
     return c
 
 def flood_fill(app, area, iter):
-    id = timer_start(app, "flood_fill")
-
     for y in range(area["y1"], area["y2"] + 1):
         for x in range(area["x1"], area["x2"] + 1):
             app["map"][y * app["map_width"] + x] = iter  #set_pixel(app, x, y, iter)
-    timer_stop(app, "flood_fill", id)
 
 def generate_mandelbrot_area(app, pix, set, iter_limit):
-    id = timer_start(app, "generate_mandelbrot_area")
-
     # Initialize the stack with the first region to process
     stack = [(pix, set)]
 
@@ -419,10 +397,8 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
         # Pop the last item from the stack
         current_pix, current_set = stack.pop()
 
-        dmdp_id = timer_start(app, "generate_mandelbrot_area_dmdp")
         dxp, dyp = int(current_pix["x2"] - current_pix["x1"]), int(current_pix["y2"] - current_pix["y1"])
         dxm, dym = float(current_set["x2"] - current_set["x1"]) / float(dxp), float(current_set["y2"] - current_set["y1"]) / float(dyp)
-        timer_stop(app, "generate_mandelbrot_area_dmdp", dmdp_id)
 
         # A small box can be filled in with the same color if the corners are identical
         done = False
@@ -450,8 +426,6 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
 
         # Perform vertical split
         if not done and dyp >= 3 and dyp >= dxp:
-            split_id = timer_start(app, "generate_mandelbrot_area_split")
-
             splityp = int(dyp / 2)
             syp_above = splityp + current_pix["y1"]
             syp_below = syp_above + 1
@@ -461,17 +435,14 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
             # Add sub-regions to the stack
             stack.append((alt(current_pix, "y1", syp_below), alt(current_set, "y1", sym_below)))
             stack.append((alt(current_pix, "y2", syp_above), alt(current_set, "y2", sym_above)))
-            timer_stop(app, "generate_mandelbrot_area_split", split_id)
 
             # Perform horizontal split
         elif not done and dxp >= 3 and dyp >= 3:
-            split_id = timer_start(app, "generate_mandelbrot_area_split")
             splitxp = int(dxp / 2)
             sxp_left = splitxp + current_pix["x1"]
             sxp_right = sxp_left + 1
             sxm_left = current_set["x1"] + splitxp * dxm
             sxm_right = current_set["x1"] + (splitxp + 1) * dxm
-            timer_stop(app, "generate_mandelbrot_area_split", split_id)
 
             # Add sub-regions to the stack
             stack.append((alt(current_pix, "x1", sxp_right), alt(current_set, "x1", sxm_right)))
@@ -479,26 +450,19 @@ def generate_mandelbrot_area(app, pix, set, iter_limit):
 
             # This is a small area with differing iterations, calculate/mark them individually
         elif not done:
-            final_generate_id = timer_start(app, "generate_mandelbrot_area final_generate_pixel")
             for offy in range(0, dyp + 1):
                 for offx in range(0, dxp + 1):
                     generate_pixel(app, current_pix["x1"] + offx, current_pix["y1"] + offy, current_set["x1"] + (dxm * offx), current_set["y1"] + (dym * offy), iter_limit)
-            timer_stop(app, "generate_mandelbrot_area final_generate_pixel", final_generate_id)
-
-    timer_stop(app, "generate_mandelbrot_area", id)
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(app, xp, yp, xm, ym, iter_limit):
-    id = timer_start(app, "generate_pixel")
-
     stored_val = app["map"][yp * app["map_width"] + xp]  # get_pixel(app, xp, yp)
     if stored_val != -1:
-        timer_stop(app, "generate_pixel", id)
         return stored_val
 
     # Normal mandelbrot calculation
-    iter, _ = mandelbrot_calc(app, xm, ym, iter_limit)
+    iter, _ = mandelbrot_calc(xm, ym, iter_limit)
 
     # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
     if iter == iter_limit:
@@ -507,41 +471,32 @@ def generate_pixel(app, xp, yp, xm, ym, iter_limit):
     # Save iterations for pixel in map
     app["map"][yp * app["map_width"] + xp] = iter  # set_pixel(app, xp, yp, iter)
 
-    timer_stop(app, "generate_pixel", id)
     return iter
 
 def set_pixel(app, xp, yp, value):
-    id = timer_start(app, "set_pixel")
     # Check if xp and yp are within valid bounds
     # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
     #     fail("Bad set_pixel(" + str(xp) + "," + str(yp) + ") call")
 
     app["map"][yp * app["map_width"] + xp] = value
-    timer_stop(app, "set_pixel", id)
 
 def get_pixel(app, xp, yp):
-    id = timer_start(app, "get_pixel")
     # Check if xp and yp are within valid bounds
     # if xp < 0 or xp >= app['map_width'] or yp < 0 or yp >= app['map_height']:
     #     fail("Bad get_pixel(" + str(xp) + "," + str(yp) + ") call")
 
     value = app["map"][yp * app["map_width"] + xp]
 
-    timer_stop(app, "get_pixel", id)
     return value
 
 def create_empty_map(app):
-    id = timer_start(app, "create_empty_map")
     map_size = app["map_width"] * app["map_height"]
     map = []
     for _ in range(map_size):
         map.append(-1)  # Manually append -1 for each entry
     app["map"] = map
-    timer_stop(app, "create_empty_map", id)
 
 def render_mandelbrot(app, x, y):
-    iterations = int(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER)
-
     # Determine coordinates
     half_width = (MAXX - MINX) / app["zoom_level"] / 2.0
     half_height = (MAXY - MINY) / app["zoom_level"] / 2.0
@@ -557,15 +512,13 @@ def render_mandelbrot(app, x, y):
     pix = {"x1": 0, "y1": 0, "x2": app["max_pixel_x"], "y2": app["max_pixel_y"]}
     set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
     app["region"] = set
-    generate_mandelbrot_area(app, pix, set, iterations)
+    generate_mandelbrot_area(app, pix, set, app["max_iter"])
 
     # Render the map to the display
     return render_display(app)
 
 # Converts a map to a Tidbyt Column made up of Rows made up of Boxes
 def render_display(app):
-    rd_id = timer_start(app, "render_display")
-
     # Loop through each pixel in the display
     rows = list()
     osx, osy = 0, 0
@@ -595,9 +548,7 @@ def render_display(app):
                 for sample in samples:
                     rgbs.append(get_gradient_rgb(app, sample))
 
-                id = timer_start(app, "blend_rgbs")
                 color = blend_rgbs(*rgbs)
-                timer_stop(app, "blend_rgbs", id)
 
             # Add a 1x1 box with the appropriate color to the row
             if next_color == "":  # First color of row
@@ -614,12 +565,8 @@ def render_display(app):
         osy += app["oversample_multiplier"]
 
         # Add the row to the grid
-        id = timer_start(app, "add_box")
         add_box(row, run_length, color)  # Add last box for row
-        timer_stop(app, "add_box", id)
         rows.append(render.Row(children = row))
-
-    timer_stop(app, "render_display", rd_id)
 
     return render.Column(
         children = rows,
@@ -631,11 +578,8 @@ def add_box(row, run_length, color):
     else:
         row.append(render.Box(width = run_length, height = 1, color = color))
 
-def rnd(app):
-    id = timer_start(app, "rnd")
-    val = float(random.number(0, MAX_INT)) / float(MAX_INT)
-    timer_stop(app, "rnd", id)
-    return val
+def rnd():
+    return float(random.number(0, MAX_INT)) / float(MAX_INT)
 
 def get_schema():
     return schema.Schema(
@@ -752,7 +696,7 @@ def poi_options(type):
                 icon = "hashtag",
                 default = "1000.0",
             ),
-        ]        
+        ]
 
     # Popular have no custom options
     return []
@@ -765,66 +709,3 @@ def err(msg):
             color = "#f00",
         ),
     )
-
-###
-# TIMERS
-###
-
-def timer_start(app, category):
-    if "profiling" not in app:
-        app["profiling"] = {}
-
-    # Ensure category exists
-    if category not in app["profiling"]:
-        app["profiling"][category] = {
-            "elapsed": 0,  # Store total elapsed time
-            "timers": [],  # Store individual timer start times
-        }
-
-    # Get the current time in nanoseconds and store it as a unique timer
-    start_time_ns = time.now().unix_nano
-    timer_id = len(app["profiling"][category]["timers"])
-    app["profiling"][category]["timers"].append(start_time_ns)
-
-    # Return the timer ID for reference in end_time
-    return timer_id
-
-def timer_stop(app, category, timer_id):
-    if "profiling" not in app or category not in app["profiling"]:
-        fail("Must call start before end for category '{}'".format(category))
-
-    # Ensure the timer_id is valid and exists
-    timers = app["profiling"][category]["timers"]
-    if timer_id >= len(timers) or timers[timer_id] == None:
-        fail("Invalid timer_id '{}' for category '{}'".format(timer_id, category))
-
-    # Get the current time as end time and calculate elapsed nanoseconds
-    end_time_ns = time.now().unix_nano
-    elapsed = end_time_ns - timers[timer_id]
-
-    # Add the elapsed time to the total and mark the timer as stopped
-    app["profiling"][category]["elapsed"] += elapsed
-    app["profiling"][category]["timers"][timer_id] = None  # Mark timer as ended
-
-def timer_display(app):
-    # Display all categories' cumulative profiling results
-    if "profiling" not in app:
-        print("No profiling data available.")
-
-    result = "PROFILE\n"
-
-    for category in app["profiling"]:
-        elapsed_time_ns = app["profiling"][category]["elapsed"]  # Total elapsed time in nanoseconds
-
-        if elapsed_time_ns >= 1000000000:  # If more than or equal to 1 second
-            elapsed_time_s = elapsed_time_ns / 1000000000.0  # Convert to seconds
-            elapsed_time_s_rounded = math.round(elapsed_time_s * 1000) / 1000  # Round to 3 decimal places
-            result += " + '{}': {} sec\n".format(category, elapsed_time_s_rounded)
-        elif elapsed_time_ns >= 1000000:  # If more than or equal to 1 millisecond
-            elapsed_time_ms = elapsed_time_ns / 1000000.0  # Convert to milliseconds
-            elapsed_time_ms_rounded = math.round(elapsed_time_ms * 1000) / 1000  # Round to 3 decimal places
-            result += " + '{}': {} ms\n".format(category, elapsed_time_ms_rounded)
-        else:
-            result += " + '{}': {} ns\n".format(category, elapsed_time_ns)  # Display nanoseconds directly
-
-    print(result)
