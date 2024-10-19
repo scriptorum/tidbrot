@@ -22,8 +22,6 @@ GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in,
 MAX_POI_SAMPLES = 100000  # Number of random points to check for POI-worthiness
 CTRX, CTRY = -0.75, 0  # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
-MAX_COLOR_CHANNEL = 8  # Max quantized channel values (helps reduce Image Too Large errors)
-CHANNEL_MULT = 255.9999 / MAX_COLOR_CHANNEL  # Conversion from quantized value to full range color channel (0-255)
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
@@ -267,14 +265,14 @@ def blend_rgbs(*rgbs):
     if count == 0:
         return rgb_to_hex(rgbs[0][0], rgbs[0][1], rgbs[0][2])
     elif count == 2:  # Lame optimization
-        return rgb_to_hex(int(tr << 2 * CHANNEL_MULT), int(tg << 2 * CHANNEL_MULT), int(tb << 2 * CHANNEL_MULT))
+        return rgb_to_hex(int(tr << 2), int(tg << 2), int(tb << 2))
     elif count == 4:  # Lame optimization
-        return rgb_to_hex(int(tr << 4 * CHANNEL_MULT), int(tg << 4 * CHANNEL_MULT), int(tb << 4 * CHANNEL_MULT))
+        return rgb_to_hex(int(tr << 4), int(tg << 4), int(tb << 4))
 
-    return rgb_to_hex(int(tr / count * CHANNEL_MULT), int(tg / count * CHANNEL_MULT), int(tb / count * CHANNEL_MULT))
+    return rgb_to_hex(int(tr / count), int(tg / count), int(tb / count))
 
 def random_color_tuple():
-    return (random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL), random.number(0, MAX_COLOR_CHANNEL))
+    return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
 
 
 def get_random_gradient(app):
@@ -294,7 +292,7 @@ def get_random_gradient(app):
             primary_channel = 1
         elif pal_type == 'blue':
             primary_channel = 2
-        color[primary_channel] = MAX_COLOR_CHANNEL
+        color[primary_channel] = 255
         channel2 = (primary_channel + 1) % 3
         channel3 = (primary_channel + 2) % 3
             
@@ -306,7 +304,7 @@ def get_random_gradient(app):
         else:
             # Deterministic calculation for the primary channel using sine wave
             phase = step / NUM_GRADIENT_STEPS * 2 * math.pi  # Full cycle for primary channel
-            intensity = (math.sin(phase) + 1) / 2 * MAX_COLOR_CHANNEL
+            intensity = (math.sin(phase) + 1) / 2 * 255
 
             # Set the primary channel with smooth transition
             color[primary_channel] = int(intensity)
@@ -316,8 +314,8 @@ def get_random_gradient(app):
             freq3 = NUM_GRADIENT_STEPS * 0.5  # Even faster frequency for channel3
 
             # Apply independent sine variations for the secondary and tertiary channels
-            color[channel2] = int(((math.sin(step / freq2 * 2 * math.pi) + 1) / 2) * MAX_COLOR_CHANNEL * 0.6)  # Adjust scale to 60%
-            color[channel3] = int(((math.sin(step / freq3 * 2 * math.pi) + 1) / 2) * MAX_COLOR_CHANNEL * 0.4)  # Adjust scale to 40%
+            color[channel2] = int(((math.sin(step / freq2 * 2 * math.pi) + 1) / 2) * 255 * 0.6)  # Adjust scale to 60%
+            color[channel3] = int(((math.sin(step / freq3 * 2 * math.pi) + 1) / 2) * 255 * 0.4)  # Adjust scale to 40%
 
             gradient.append(tuple(color))
 
@@ -330,8 +328,8 @@ def alter_color_rgb(color):
     rnd_idx = (flip_idx + random.number(1, 2)) % 3
     keep_idx = 3 - flip_idx - rnd_idx
     new_color = [0, 0, 0]
-    new_color[flip_idx] = MAX_COLOR_CHANNEL - color[flip_idx]
-    new_color[rnd_idx] = random.number(0, MAX_COLOR_CHANNEL)
+    new_color[flip_idx] = 255 - color[flip_idx]
+    new_color[rnd_idx] = random.number(0, 255)
     new_color[keep_idx] = color[keep_idx]
     return new_color
 
@@ -583,7 +581,7 @@ def render_display(app):
             if DISPLAY_WIDTH == app["map_width"]:
                 iter = app["map"][osy * app["map_width"] + osx]  #get_pixel(app, osx, osy)
                 rgb = get_gradient_rgb(app, iter)
-                color = rgb_to_hex(int(rgb[0] * CHANNEL_MULT), int(rgb[1] * CHANNEL_MULT), int(rgb[2] * CHANNEL_MULT))
+                color = rgb_to_hex(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
                 # Get color by oversampling
             else:
