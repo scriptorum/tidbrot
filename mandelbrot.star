@@ -1,3 +1,22 @@
+# Next Step:
+# - POI Rewrite again:
+#   + Zoom in to MAX on N points
+#   + For eac top M point, if score is below mimimal threshold, zoom out and recalculate,
+#     repeating until score exceeds threshold or at zoom = 1
+# - Adaptive AA:
+#   + Start with 64x32 display
+#   + If "small area with differing iterations" oversample that region
+#   + Stop at max oversample
+#   + Combine with timeout prediction at calc all oversamples at the same level before
+#     sampling any deeper to dynamically stop when timeout is nigh
+# - Time out prediction:
+#   + Time mandelbrot calc for broad POI check
+#   + Extrapolate to estimate time to calculate 64x32 no supersample
+#   + Extrapolate to estimate depth of supersample possible under time limit
+#   + Use to adjust zoom / super sample / iteration limit / POI search points
+# - Recoloring effects after renddering:
+#   + normalize brightness
+#
 load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
@@ -5,7 +24,7 @@ load("schema.star", "schema")
 load("time.star", "time")
 
 MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
-ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, less accuracy
+ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
 ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
@@ -13,9 +32,9 @@ NUM_GRADIENT_STEPS = 64  # Higher = more color variation
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
 CTRX, CTRY = -0.75, 0  # mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
-POI_SEARCH_POINTS = 5000
-POI_SEARCH_GRID = 6
-POI_SEARCH_ZOOM = 100
+POI_SEARCH_POINTS = 1000
+POI_SEARCH_GRID = 12
+POI_MAX_ZOOM = 250
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
@@ -62,19 +81,7 @@ def main(config):
 
     # Determine what POI to zoom onto
     app["target"] = 0, 0
-    app["zoom_level"] = rnd() * 1000
-    app["max_iter"] = int(MIN_ITER + app["zoom_level"] * ZOOM_TO_ITER)
-    poi_type = config.str("poi", "search")
-    if poi_type == "search":
-        app["target"] = find_point_of_interest(app)  # Choose a point of interest
-        app["zoom_level"] /= POI_SEARCH_ZOOM
-        app["desc"] = "random"
-    elif poi_type == "specific":
-        app["target"] = float(config.str("poi_coord_real", 0)), float(config.str("poi_coord_imaginary", 0))
-        app["desc"] = "your coordinates"
-    else:
-        return err("Unrecognized POI type: {}".format(poi_type))
-    print("POI target:", app["target"][0], app["target"][1], "Desc:", app["desc"])
+    choose_point_of_interest(app)  # Choose a point of interest
     print("Zoom Level:", app["zoom_level"])
 
     app["palette"] = config.str("palette", "random")
@@ -119,42 +126,45 @@ def float_range(start, end, num_steps, inclusive = False):
         result.append(end)
     return result
 
-def find_point_of_interest(app):
+def choose_point_of_interest(app):
     print("Determining point of interest")
-    x, y, best = find_poi_near(app, CTRX, CTRY, (MAXX - MINX))
-    print("Settled on POI:", x, y, "score:", best)
-    return x, y
+    x, y, best, zoom = find_poi(app)
 
-def find_poi_near(app, ctrx, ctry, depth):
-    bestx, besty, best_score = ctrx, ctry, 0.0
-    eval_depth = depth / POI_SEARCH_ZOOM
+    print("Settled on POI:", x, y, "score:", best)
+    app["target"] = x, y
+    app["zoom_level"] = zoom
+    app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
+
+def find_poi(app):
+    extents_x, extents_y = (MAXX - MINX), (MAXY - MINY)
+    bestx, besty, best_score = CTRX, CTRY, 0.0
     for _ in range(POI_SEARCH_POINTS):
-        x, y = ctrx + (rnd() - 0.5) * depth, ctry + (rnd() - 0.5) * depth
-        score = evaluate_poi(app, x, y, eval_depth)
+        zoom_level = rnd() * POI_MAX_ZOOM
+        iter_limit = int(MIN_ITER + zoom_level * ZOOM_TO_ITER)
+        x, y = CTRX + (rnd() - 0.5) * extents_x, CTRY + (rnd() - 0.5) * extents_y        
+        half_width, half_height = extents_x / zoom_level / 2.0, extents_y / zoom_level / 2.0
+        score = evaluate_poi(app, x, y, half_width, half_height, iter_limit)
+        # print ("Evaluated possible POI at ", x, y, "+/-", half_width, half_height, "at iter_limit", iter_limit, "with zoom", zoom_level, "SCORE:", score)
         if score > best_score:
             bestx, besty, best_score = x, y, score
-    return bestx, besty, best_score
+    return bestx, besty, best_score, zoom_level
 
-def evaluate_poi(app, x, y, depth):
-    iter_limit = app["max_iter"]
+# Do a grid search at target POI to come up with an overall fitness score
+def evaluate_poi(app, x, y, half_width, half_height, iter_limit):
     score = 0
-    divisor = depth / POI_SEARCH_GRID
-    half_depth = depth / 2
-    x, y = x - half_depth, y - half_depth
-    newy = y
-    for _ in range(POI_SEARCH_GRID):
-        newx = x
-        for _ in range(POI_SEARCH_GRID):
-            _, last_escape = mandelbrot_calc(newx, newy, iter_limit)
-            if last_escape < ESCAPE_THRESHOLD:
-                score += last_escape
-            newx += divisor
-        newy += divisor
-    return score / (POI_SEARCH_GRID * POI_SEARCH_GRID)
-
-# Map value v from one range to another
-def map_range(v, min1, max1, min2, max2):
-    return min2 + (max2 - min2) * (v - min1) / (max1 - min1)
+    x, y = x - half_width, y - half_height # Reorient from center of grid to corner
+    offx, offy = half_width * 2 / POI_SEARCH_GRID, half_height * 2 / POI_SEARCH_GRID
+    evaly = y
+    for _ in range(POI_SEARCH_GRID): # y
+        evalx = x
+        for _ in range(POI_SEARCH_GRID): # x
+            iter, esc = mandelbrot_calc(evalx, evaly, iter_limit)
+            # print ("Checking", evalx, evaly, "@", iter_limit, "limit, got iter:", iter, "esc:", esc)
+            if iter < iter_limit:
+                score += iter
+            evalx += offx
+        evaly += offy
+    return score #/ (POI_SEARCH_GRID * POI_SEARCH_GRID)
 
 # Performs the mandelbrot calculation on a single point
 # Returns both the escape distance and the number of iterations
