@@ -40,7 +40,7 @@ BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregener
 POI_GRID_X = 8
 POI_GRID_Y = 4
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
-POI_MAX_ZOOM = 20000000
+POI_MAX_ZOOM = 2000000     
 POI_MAX_TIME = 4 # Don't exceed POI_MAX_TIME seconds searching for POI
 
 def main(config):
@@ -52,7 +52,7 @@ def main(config):
     # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
     # MULTIPLIER -->  1 = no or mini AA, 2 = 2AA (2x2=4X samples)
     # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
-    oversampling = config.str("oversampling", "4x")
+    oversampling = config.str("oversampling", "2x")
     if oversampling == "none":
         app["oversample_range"] = 1
         app["oversample_multiplier"] = 1
