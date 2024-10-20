@@ -1,23 +1,6 @@
 # Next Step:
-# - POI Rewrite again:
-#   + Zoom in to MAX on N points
-#   + For each top M point, if score is below mimimal threshold, zoom out and recalculate,
-#     repeating until score exceeds threshold or at zoom = 1
-# - Alternate POI Rewrite:
-#   + Do full mandelbrot AREA SEARCH
-#   + AREA SEARCH: 
-#     > Add mandelbrot area to list
-#     > 1) Iterate over each item on list
-#     > Make MxN grid of each item
-#     > Sample one random point within each grid item
-#     > If point escapes, return to 1
-#     > If iterations < zoom_level * ZOOM_TO_ITER, return to 1
-#     > If MAX_TIME exceeded, go to STOP SEARCHING
-#     > Zoom in on point (if grid is 8x4 then zoom in 800% -- 64/8*100) and add as area to list
-#     > 2) If list empty, STOP SEARCHING
-#     > Go to AREA SEARCH
-#   + STOP SEARCHING:
-#     > Pick item on list with highest POI fitness score
+# - POI optimization:
+#   + Quit out early if iteration count is not interesting given zoom level
 # - POI Nudging Routine:
 #   + Grid up area of POI (say 8x4)
 #   + Add extra points outside of area (an additional 4x2 perhaps)
@@ -57,14 +40,10 @@ BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregener
 POI_GRID_X = 8
 POI_GRID_Y = 4
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
-POI_MAX_ZOOM = 70
+POI_MAX_ZOOM = 20000000
+POI_MAX_TIME = 4 # Don't exceed POI_MAX_TIME seconds searching for POI
 
 def main(config):
-    # x = 1791000124124124
-    # print(x)
-    # print("{}".format(x))
-    # return render.Root(BLACK_PIXEL)
-
     seed = time.now().unix
     random.seed(seed)
     print("Using random seed:", seed)
@@ -167,11 +146,12 @@ def choose_poi(app):
 
 # Finds a respectable point of interest ... allgedly
 def find_poi(app):
+    start_time = time.now().unix
     bestx, besty, best_score, best_zoom = 0, 0, 0, 1
     search_areas = []
     search_areas.append((MINX, MINY, MAXX, MAXY, 1))
 
-    for _ in range(MAX_INT):
+    for _ in range(MAX_INT): # Woe, there be no while loops
         if len(search_areas) == 0:
             break
 
@@ -184,28 +164,42 @@ def find_poi(app):
         cell_width_half = cell_width / 2.0
         cell_height_half = cell_height / 2.0
         score = 0
+        best_iter_in_grid = 0
 
+        # Divide area into grid cells and evaluate each
         for y in range(POI_GRID_Y):
             for x in range(POI_GRID_X):
                 sampx = (rnd() - 0.5 + x) * cell_width + minx
                 sampy = (rnd() - 0.5 + y) * cell_height + miny
                 iter, esc = mandelbrot_calc(sampx, sampy, iter_limit)
-                if iter >= iter_limit:
+                if iter >= iter_limit: # Did not escape
                     continue
-                if zoom < POI_MAX_ZOOM:
-                    new_min_x = sampx - cell_width_half
-                    new_min_y = sampy - cell_height_half
-                    new_max_x = sampx + cell_width_half
-                    new_max_y = sampy + cell_height_half
-                    new_zoom = zoom * POI_ZOOM
-                    search_areas.append((new_min_x, new_min_y, new_max_x, new_max_y, new_zoom))
+                if zoom > POI_MAX_ZOOM: # At max zoom level
+                    continue
+                                
+                new_min_x = sampx - cell_width_half
+                new_min_y = sampy - cell_height_half
+                new_max_x = sampx + cell_width_half
+                new_max_y = sampy + cell_height_half
+                new_zoom = zoom * POI_ZOOM
                 score += iter
+                # Only zoom in if we didn't find a better candidate in the grid
+                if iter > best_iter_in_grid:
+                    best_iter_in_grid = iter
+                    search_areas.append((new_min_x, new_min_y, new_max_x, new_max_y, new_zoom))
 
+        # Look at the combined score of all the grid cells
+        # If this the best one so far, note it!
         if score > best_score:
             bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny)/2, score, zoom
             print("New best:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
             print_link(bestx, besty, iter_limit, best_zoom)
 
+        elapsed = time.now().unix - start_time
+        if elapsed > POI_MAX_TIME: # Time limit
+            print("Exceeded time limit for POI search:", elapsed, "seconds")
+            break
+        
     return bestx, besty, best_score, best_zoom
 
 # Performs the mandelbrot calculation on a single point
