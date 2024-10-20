@@ -147,11 +147,14 @@ def choose_poi(app):
 # Finds a respectable point of interest ... allgedly
 def find_poi(app):
     start_time = time.now().unix
+    end_time = start_time + POI_MAX_TIME
     bestx, besty, best_score, best_zoom = 0, 0, 0, 1
     search_areas = []
     search_areas.append((MINX, MINY, MAXX, MAXY, 1))
 
     for _ in range(MAX_INT): # Woe, there be no while loops
+        if time.now().unix > end_time:
+            break
         if len(search_areas) == 0:
             break
 
@@ -168,7 +171,11 @@ def find_poi(app):
 
         # Divide area into grid cells and evaluate each
         for y in range(POI_GRID_Y):
+            if time.now().unix > end_time:
+                break
             for x in range(POI_GRID_X):
+                if time.now().unix > end_time:
+                    break
                 sampx = (rnd() - 0.5 + x) * cell_width + minx
                 sampy = (rnd() - 0.5 + y) * cell_height + miny
                 iter, esc = mandelbrot_calc(sampx, sampy, iter_limit)
@@ -195,10 +202,11 @@ def find_poi(app):
             print("New best:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
             print_link(bestx, besty, iter_limit, best_zoom)
 
-        elapsed = time.now().unix - start_time
-        if elapsed > POI_MAX_TIME: # Time limit
-            print("Exceeded time limit for POI search:", elapsed, "seconds")
-            break
+    # In theory this should stop shortly after hitting POI_MAX_TIME
+    # But sometimes the Tidbyt servers throttle their apps
+    # So I've gotta sprinkle this check everywhere
+    if time.now().unix > end_time:
+        print("Exceeded time limit for POI search:", (time.now().unix - start_time), "seconds")
         
     return bestx, besty, best_score, best_zoom
 
