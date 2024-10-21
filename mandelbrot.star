@@ -52,32 +52,20 @@ def main(config):
     # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
     oversampling = config.str("oversampling", "4x")
     if oversampling == "none":
-        app["oversample_range"] = 1
-        app["oversample_multiplier"] = 1
-        app["oversample_offset"] = 0
-    elif oversampling == "mini":
-        app["oversample_range"] = 2
-        app["oversample_multiplier"] = 1
-        app["oversample_offset"] = 1
+        app["oversample"] = 1
     elif oversampling == "2x":
-        app["oversample_range"] = 2
-        app["oversample_multiplier"] = 2
-        app["oversample_offset"] = 0
+        app["oversample"] = 2
     elif oversampling == "4x":
-        app["oversample_range"] = 4
-        app["oversample_multiplier"] = 4
-        app["oversample_offset"] = 0
+        app["oversample"] = 4
     elif oversampling == "8x":
-        app["oversample_range"] = 8
-        app["oversample_multiplier"] = 8
-        app["oversample_offset"] = 0
+        app["oversample"] = 8
     else:
         return err("Unknown oversampling value: %s" % oversampling)
-    print("Oversampling RANGE:", app["oversample_range"], "MULT:", app["oversample_multiplier"], "OFFSET:", app["oversample_offset"])
+    print("Oversampling:", app["oversample"])
 
     # Calculate internal map dimensions
-    app["map_width"] = DISPLAY_WIDTH * app["oversample_multiplier"] + app["oversample_offset"]  # Pixels samples per row
-    app["map_height"] = DISPLAY_HEIGHT * app["oversample_multiplier"] + app["oversample_offset"]  # Pixel samples per column
+    app["map_width"] = DISPLAY_WIDTH * app["oversample"]  # Pixels samples per row
+    app["map_height"] = DISPLAY_HEIGHT * app["oversample"]  # Pixel samples per column
     app["max_pixel_x"] = app["map_width"] - 1  # Maximum sample for x
     app["max_pixel_y"] = app["map_height"] - 1  # Maximum sample for y
 
@@ -148,11 +136,12 @@ def get_frames(app):
     # This was a loop for an animation, but the animation takes too long
     # to render on Tidbyt servers with any degree of quality
     frames = list()  # List to store frames of the animation
-    data = render_mandelbrot(app, app["target"][0], app["target"][1])
-    data = normalize_brightness(data)
+    rgb_map = render_mandelbrot(app, app["target"][0], app["target"][1])
+    rgb_map = normalize_brightness(rgb_map)
     if GAMMA_CORRECTION > 1.0:
-        data = gamma_correction(data)
-    frames.append(render_display(data))
+        rgb_map = gamma_correction(rgb_map)
+    tidbytMap = render_tidbyt(rgb_map)
+    frames.append(tidbytMap)
 
     print_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"])
     return frames
@@ -585,30 +574,34 @@ def render_mandelbrot(app, x, y):
     generate_mandelbrot_area(app['map'], app['map_width'], app['max_iter'], pix, set, app["max_iter"])
 
     # Render the map to the display
-    return downsample(app['map'], app['map_width'], app['max_iter'], app['gradient'], app['oversample_range'], app['oversample_multiplier'])
+    rgb_map = downsample(app['map'], app['map_width'], DISPLAY_WIDTH, app['max_iter'], app['gradient'])
+    return rgb_map
 
-# Convert iteration map data to RGB map data
-def downsample(map, map_width, max_iter, gradient, oversample_range, oversample_multiplier):
+# Convert iteration map data to RGB map data and downsample
+def downsample(iteration_map, src_width, final_width, max_iter, gradient):
     osx, osy = 0, 0
     color = 0
-    display = []
+    rgb_map = []
+    src_height = len(iteration_map) / src_width
+    oversample = int(src_width / src_height)
+    final_height = int(final_width / oversample)
 
-    for _ in range(DISPLAY_HEIGHT):  # y
+    for _ in range(final_height):  # y
         osx = 0
 
-        for _ in range(DISPLAY_WIDTH):  # x
-            # Get color from single pixel
-            if DISPLAY_WIDTH == map_width:
-                iter = map[osy * map_width + osx] 
+        for _ in range(final_width):  # x
+            # Get color from single pixel, no oversampling
+            if oversample == 1:
+                iter = iteration_map[osy * src_width + osx] 
                 rgb = get_gradient_rgb(gradient, max_iter, iter)
                 color = rgb_to_hex(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
             # Get color by oversampling
             else:
                 samples = []
-                for offy in range(oversample_range):
-                    for offx in range(oversample_range):
-                        iter = map[(osy + offy) * map_width + osx + offx] 
+                for offy in range(oversample):
+                    for offx in range(oversample):
+                        iter = iteration_map[(osy + offy) * src_width + osx + offx] 
                         samples.append(iter)
 
                 rgbs = []
@@ -616,14 +609,15 @@ def downsample(map, map_width, max_iter, gradient, oversample_range, oversample_
                     rgbs.append(get_gradient_rgb(gradient, max_iter, sample))
 
                 color = blend_rgbs(*rgbs)
-                display.append(color)
+                rgb_map.append(color)
 
-            osx += oversample_multiplier
-        osy += oversample_multiplier
-    return display
+            osx += oversample
+        osy += oversample
+    
+    return rgb_map # Returns rgb_map
 
-# Converts a map to a Tidbyt Column made up of Rows made up of Boxes
-def render_display(data):
+# Converts an rgb map to a Tidbyt Column made up of Rows made up of Boxes
+def render_tidbyt(rgb_map):
     # Loop through each pixel in the display
     rows = list()
     color = 0
@@ -635,7 +629,7 @@ def render_display(data):
         run_length = 0
 
         for _ in range(DISPLAY_WIDTH):  # x
-            color = data[index]
+            color = rgb_map[index]
             index +=1
 
             # Add a 1x1 box with the appropriate color to the row
@@ -678,7 +672,6 @@ def get_schema():
                 default = "none",
                 options = [
                     schema.Option(value = "none", display = "None"),
-                    schema.Option(value = "mini", display = "Mini AA (slow)"),
                     schema.Option(value = "2x", display = "2X AA (slower)"),
                     schema.Option(value = "4x", display = "4X AA (much slower)"),
                     schema.Option(value = "8x", display = "8X AA (imagine even slower)"),
