@@ -623,6 +623,9 @@ def render_tidbyt(rgb_map):
     color = 0
     index = 0
 
+    if len(rgb_map) != DISPLAY_WIDTH * DISPLAY_HEIGHT:
+        return err("Final map must be display size", False)
+
     for _ in range(DISPLAY_HEIGHT):  # y
         row = list()
         next_color = ""
@@ -779,11 +782,14 @@ def poi_options(type):
     # Popular have no custom options
     return []
 
-def err(msg):
-    return render.Root(
-        render.WrappedText(
-            content = msg,
-            width = 64,
-            color = "#f00",
-        ),
+def err(msg, include_root = True):
+    text = render.WrappedText(
+        content = msg,
+        width = 64,
+        color = "#f00",
     )
+
+    if include_root:
+        return render.Root(text)
+    
+    return text
