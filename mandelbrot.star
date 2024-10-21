@@ -14,12 +14,6 @@
 #   + Extrapolate to estimate time to calculate 64x32 no supersample
 #   + Extrapolate to estimate depth of supersample possible under time limit
 #   + Use to adjust zoom / super sample / iteration limit / POI search points
-# - Recoloring effects after rendering:
-#   + normalize brightness:
-#     > break out downsample() from render_display())
-#     > use downsampled() result to determine highest color channel from all pixels
-#     > determine multiplier to convert that value to 255
-#     > Multiply all channels by that multiplier
 #
 load("math.star", "math")
 load("random.star", "random")
@@ -44,6 +38,7 @@ POI_GRID_Y = 4
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
 POI_MAX_ZOOM = 2000000
 POI_MAX_TIME = 4  # Don't exceed POI_MAX_TIME seconds searching for POI
+BRIGHTNESS_MIN = 16 # For brightness normalization, don't bring channel below this
 
 def main(config):
     seed = time.now().unix
@@ -99,9 +94,38 @@ def main(config):
     frames = get_frames(app)
 
     return render.Root(
-        delay = 15000,
+        delay = 1000,
         child = render.Box(render.Animation(frames)),
     )
+
+# Ya know, it uh, normalizes ... the brightness
+def normalize_brightness(data):
+    # Determine low and high channel values
+    lowest_channel = 255
+    highest_channel = 0
+    for i in range(len(data)):
+        channels = hex_to_rgb(data[i])
+        for c in range(len(channels)):
+            if channels[c] < lowest_channel:
+                lowest_channel = channels[c]
+            elif channels[c] > highest_channel:
+                highest_channel = channels[c]
+
+    # Determine adjustment
+    subtraction = 0
+    if lowest_channel > BRIGHTNESS_MIN:
+        subtraction = lowest_channel - BRIGHTNESS_MIN
+    multiplier = (255.0 + subtraction) / highest_channel
+    
+    # Normalize data
+    for i in range(len(data)):
+        channels = list(hex_to_rgb(data[i]))
+        for c in range(len(channels)):
+            channels[c] = int(channels[c] * multiplier - subtraction)
+        data[i] = rgb_to_hex(*channels)
+
+    print ("Brightness Normalization = Lowest:", lowest_channel, "Highest:", highest_channel, "Subtract:", subtraction, "Mult:", multiplier)
+    return data
 
 def get_frames(app):
     app["gradient"] = get_random_gradient(app)
@@ -112,8 +136,9 @@ def get_frames(app):
     # to render on Tidbyt servers with any degree of quality
     frames = list()  # List to store frames of the animation
     data = render_mandelbrot(app, app["target"][0], app["target"][1])
-    frame = render_display(data)
-    frames.append(frame)
+    frames.append(render_display(data))
+    normalized_data = normalize_brightness(data)
+    frames.append(render_display(normalized_data))
 
     print_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"])
     return frames
@@ -204,7 +229,7 @@ def find_poi():
         # If this the best one so far, note it!
         if score > best_score:
             bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny) / 2, score, zoom
-            print("New best:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
+            print("Found better POI:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
             print_link(bestx, besty, iter_limit, best_zoom)
 
     # In theory this should stop shortly after hitting POI_MAX_TIME
@@ -249,6 +274,13 @@ def int_to_hex(n):
 # Convert RGB values to a hexadecimal color code
 def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
+
+def hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip('#')
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return (r, g, b)    
 
 def get_gradient_color(app, iter):
     r, g, b = get_gradient_rgb(app, iter)
@@ -616,6 +648,7 @@ def render_display(data):
     # Loop through each pixel in the display
     rows = list()
     color = 0
+    index = 0
 
     for _ in range(DISPLAY_HEIGHT):  # y
         row = list()
@@ -623,7 +656,8 @@ def render_display(data):
         run_length = 0
 
         for _ in range(DISPLAY_WIDTH):  # x
-            color = data.pop(0)
+            color = data[index]
+            index +=1
 
             # Add a 1x1 box with the appropriate color to the row
             if next_color == "":  # First color of row
