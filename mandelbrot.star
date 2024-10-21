@@ -522,6 +522,13 @@ def generate_mandelbrot_area(iter_map, max_iter, orig_pix, orig_set, iter_limit)
 
             # This is a small area with differing iterations, calculate/mark them individually
         elif not done:
+            # To do this I still need to modify this method to work with RGB and not iters
+            # sub_map = create_map(dxp + 1, dyp + 1)
+            # SUB_OVERSAMPLE = 8
+            # sub_pix = { 'x1': 0, 'y1': 0, 'x2': pix["x1"] * SUB_OVERSAMPLE, 'y2': pix['y1'] * SUB_OVERSAMPLE }
+            # sub_set = { 'x1': set['x1'], 'y1': set['y1'], 'x2': set['x1'] + dxm * dxp, 'y2': set['y1'] + dym * dyp }
+            # generate_mandelbrot_area(sub_map, max_iter, sub_pix, sub_set, iter_limit)
+
             for offy in range(0, dyp + 1):
                 for offx in range(0, dxp + 1):
                     generate_pixel(iter_map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit)
