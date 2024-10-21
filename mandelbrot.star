@@ -459,9 +459,9 @@ def flood_fill(iteration_map, area, iter):
         for x in range(area["x1"], area["x2"] + 1):
             iteration_map['data'][y * iteration_map['width'] + x] = iter
 
-def generate_mandelbrot_area(iteration_map, max_iter, pix, set, iter_limit):
+def generate_mandelbrot_area(iteration_map, max_iter, orig_pix, orig_set, iter_limit):
     # Initialize the stack with the first region to process
-    stack = [(pix, set)]
+    stack = [(orig_pix, orig_set)]
 
     # We will dynamically increase the stack in the loop
     for _ in range(MAX_INT):  # Why no while loop, damn you starlark
@@ -469,64 +469,65 @@ def generate_mandelbrot_area(iteration_map, max_iter, pix, set, iter_limit):
             break
 
         # Pop the last item from the stack
-        current_pix, current_set = stack.pop()
+        pix, set = stack.pop()
 
-        dxp, dyp = int(current_pix["x2"] - current_pix["x1"]), int(current_pix["y2"] - current_pix["y1"])
-        dxm, dym = float(current_set["x2"] - current_set["x1"]) / float(dxp), float(current_set["y2"] - current_set["y1"]) / float(dyp)
+        # Determine some deltas
+        dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
+        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
 
         # A small box can be filled in with the same color if the corners are identical
         done = False
         if dxp <= 6 and dyp <= 6:
-            iter1 = generate_pixel(iteration_map, max_iter, current_pix["x1"], current_pix["y1"], current_set["x1"], current_set["y1"], iter_limit)
-            iter2 = generate_pixel(iteration_map, max_iter, current_pix["x2"], current_pix["y2"], current_set["x2"], current_set["y2"], iter_limit)
-            iter3 = generate_pixel(iteration_map, max_iter, current_pix["x1"], current_pix["y2"], current_set["x1"], current_set["y2"], iter_limit)
-            iter4 = generate_pixel(iteration_map, max_iter, current_pix["x2"], current_pix["y1"], current_set["x2"], current_set["y1"], iter_limit)
+            iter1 = generate_pixel(iteration_map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit)
+            iter2 = generate_pixel(iteration_map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit)
+            iter3 = generate_pixel(iteration_map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit)
+            iter4 = generate_pixel(iteration_map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit)
             if iter1 == iter2 and iter2 == iter3 and iter3 == iter4:
-                flood_fill(iteration_map, current_pix, iter1)
+                flood_fill(iteration_map, pix, iter1)
                 done = True
 
         # A border with the same iterations can be filled with the same color
         if not done:
-            iter = generate_line_opt(iteration_map, max_iter, -1, alt(current_pix, "y2", current_pix["y1"]), alt(current_set, "y2", current_set["y1"]), iter_limit)
+            iter = generate_line_opt(iteration_map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(current_pix, "y1", current_pix["y2"]), alt(current_set, "y1", current_set["y2"]), iter_limit)
+                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(current_pix, "x2", current_pix["x1"]), alt(current_set, "x2", current_set["x1"]), iter_limit)
+                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(current_pix, "x1", current_pix["x2"]), alt(current_set, "x1", current_set["x2"]), iter_limit)
+                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit)
             if iter != False:
-                flood_fill(iteration_map, current_pix, iter)
+                flood_fill(iteration_map, pix, iter)
                 done = True
 
         # Perform vertical split
         if not done and dyp >= 3 and dyp >= dxp:
             splityp = int(dyp / 2)
-            syp_above = splityp + current_pix["y1"]
+            syp_above = splityp + pix["y1"]
             syp_below = syp_above + 1
-            sym_above = current_set["y1"] + splityp * dym
-            sym_below = current_set["y1"] + (splityp + 1) * dym
+            sym_above = set["y1"] + splityp * dym
+            sym_below = set["y1"] + (splityp + 1) * dym
 
             # Add sub-regions to the stack
-            stack.append((alt(current_pix, "y1", syp_below), alt(current_set, "y1", sym_below)))
-            stack.append((alt(current_pix, "y2", syp_above), alt(current_set, "y2", sym_above)))
+            stack.append((alt(pix, "y1", syp_below), alt(set, "y1", sym_below)))
+            stack.append((alt(pix, "y2", syp_above), alt(set, "y2", sym_above)))
 
             # Perform horizontal split
         elif not done and dxp >= 3 and dyp >= 3:
             splitxp = int(dxp / 2)
-            sxp_left = splitxp + current_pix["x1"]
+            sxp_left = splitxp + pix["x1"]
             sxp_right = sxp_left + 1
-            sxm_left = current_set["x1"] + splitxp * dxm
-            sxm_right = current_set["x1"] + (splitxp + 1) * dxm
+            sxm_left = set["x1"] + splitxp * dxm
+            sxm_right = set["x1"] + (splitxp + 1) * dxm
 
             # Add sub-regions to the stack
-            stack.append((alt(current_pix, "x1", sxp_right), alt(current_set, "x1", sxm_right)))
-            stack.append((alt(current_pix, "x2", sxp_left), alt(current_set, "x2", sxm_left)))
+            stack.append((alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)))
+            stack.append((alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)))
 
             # This is a small area with differing iterations, calculate/mark them individually
         elif not done:
             for offy in range(0, dyp + 1):
                 for offx in range(0, dxp + 1):
-                    generate_pixel(iteration_map, max_iter, current_pix["x1"] + offx, current_pix["y1"] + offy, current_set["x1"] + (dxm * offx), current_set["y1"] + (dym * offy), iter_limit)
+                    generate_pixel(iteration_map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit)
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
