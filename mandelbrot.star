@@ -1,6 +1,4 @@
 # Next Step:
-# - POI optimization:
-#   + Quit out early if iteration count is not interesting given zoom level
 # - POI Nudging Routine:
 #   + Grid up area of POI (say 8x4)
 #   + Add extra points outside of area (an additional 4x2 perhaps)
@@ -17,7 +15,11 @@
 #   + Extrapolate to estimate depth of supersample possible under time limit
 #   + Use to adjust zoom / super sample / iteration limit / POI search points
 # - Recoloring effects after rendering:
-#   + normalize brightness
+#   + normalize brightness:
+#     > break out downsample() from render_display())
+#     > use downsampled() result to determine highest color channel from all pixels
+#     > determine multiplier to convert that value to 255
+#     > Multiply all channels by that multiplier
 #
 load("math.star", "math")
 load("random.star", "random")
@@ -40,8 +42,8 @@ BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregener
 POI_GRID_X = 8
 POI_GRID_Y = 4
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
-POI_MAX_ZOOM = 2000000     
-POI_MAX_TIME = 4 # Don't exceed POI_MAX_TIME seconds searching for POI
+POI_MAX_ZOOM = 2000000
+POI_MAX_TIME = 4  # Don't exceed POI_MAX_TIME seconds searching for POI
 
 def main(config):
     seed = time.now().unix
@@ -105,13 +107,15 @@ def get_frames(app):
     app["gradient"] = get_random_gradient(app)
 
     print("Generating frame")
+
     # This was a loop for an animation, but the animation takes too long
     # to render on Tidbyt servers with any degree of quality
     frames = list()  # List to store frames of the animation
-    frame = render_mandelbrot(app, app["target"][0], app["target"][1])
+    data = render_mandelbrot(app, app["target"][0], app["target"][1])
+    frame = render_display(data)
     frames.append(frame)
 
-    print_link(app['target'][0], app['target'][1], app['max_iter'], app['zoom_level'])
+    print_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"])
     return frames
 
 def print_link(x, y, iter, zoom):
@@ -136,7 +140,7 @@ def float_range(start, end, num_steps, inclusive = False):
 def choose_poi(app):
     # Find a respectable point of interest
     print("Determining point of interest")
-    x, y, best, zoom = find_poi(app)
+    x, y, best, zoom = find_poi()
 
     # Make it our target
     print("Settled on POI:", x, y, "score:", best)
@@ -145,14 +149,14 @@ def choose_poi(app):
     app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
 
 # Finds a respectable point of interest ... allgedly
-def find_poi(app):
+def find_poi():
     start_time = time.now().unix
     end_time = start_time + POI_MAX_TIME
     bestx, besty, best_score, best_zoom = 0, 0, 0, 1
     search_areas = []
     search_areas.append((MINX, MINY, MAXX, MAXY, 1))
 
-    for _ in range(MAX_INT): # Woe, there be no while loops
+    for _ in range(MAX_INT):  # Woe, there be no while loops
         if time.now().unix > end_time:
             break
         if len(search_areas) == 0:
@@ -178,18 +182,19 @@ def find_poi(app):
                     break
                 sampx = (rnd() - 0.5 + x) * cell_width + minx
                 sampy = (rnd() - 0.5 + y) * cell_height + miny
-                iter, esc = mandelbrot_calc(sampx, sampy, iter_limit)
-                if iter >= iter_limit: # Did not escape
+                iter, _ = mandelbrot_calc(sampx, sampy, iter_limit)
+                if iter >= iter_limit:  # Did not escape
                     continue
-                if zoom > POI_MAX_ZOOM: # At max zoom level
+                if zoom > POI_MAX_ZOOM:  # At max zoom level
                     continue
-                                
+
                 new_min_x = sampx - cell_width_half
                 new_min_y = sampy - cell_height_half
                 new_max_x = sampx + cell_width_half
                 new_max_y = sampy + cell_height_half
                 new_zoom = zoom * POI_ZOOM
                 score += iter
+
                 # Only zoom in if we didn't find a better candidate in the grid
                 if iter > best_iter_in_grid:
                     best_iter_in_grid = iter
@@ -198,7 +203,7 @@ def find_poi(app):
         # Look at the combined score of all the grid cells
         # If this the best one so far, note it!
         if score > best_score:
-            bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny)/2, score, zoom
+            bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny) / 2, score, zoom
             print("New best:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
             print_link(bestx, besty, iter_limit, best_zoom)
 
@@ -207,7 +212,7 @@ def find_poi(app):
     # So I've gotta sprinkle this check everywhere
     if time.now().unix > end_time:
         print("Exceeded time limit for POI search:", (time.now().unix - start_time), "seconds")
-        
+
     return bestx, besty, best_score, best_zoom
 
 # Performs the mandelbrot calculation on a single point
@@ -569,18 +574,15 @@ def render_mandelbrot(app, x, y):
     generate_mandelbrot_area(app, pix, set, app["max_iter"])
 
     # Render the map to the display
-    return render_display(app)
+    return downsample(app)
 
-# Converts a map to a Tidbyt Column made up of Rows made up of Boxes
-def render_display(app):
-    # Loop through each pixel in the display
-    rows = list()
+# Convert map data to displayable map
+def downsample(app):
     osx, osy = 0, 0
     color = 0
+    display = []
+
     for _ in range(DISPLAY_HEIGHT):  # y
-        row = list()
-        next_color = ""
-        run_length = 0
         osx = 0
 
         for _ in range(DISPLAY_WIDTH):  # x
@@ -590,7 +592,7 @@ def render_display(app):
                 rgb = get_gradient_rgb(app, iter)
                 color = rgb_to_hex(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
-                # Get color by oversampling
+            # Get color by oversampling
             else:
                 samples = []
                 for offy in range(app["oversample_range"]):
@@ -603,6 +605,25 @@ def render_display(app):
                     rgbs.append(get_gradient_rgb(app, sample))
 
                 color = blend_rgbs(*rgbs)
+                display.append(color)
+
+            osx += app["oversample_multiplier"]
+        osy += app["oversample_multiplier"]
+    return display
+
+# Converts a map to a Tidbyt Column made up of Rows made up of Boxes
+def render_display(data):
+    # Loop through each pixel in the display
+    rows = list()
+    color = 0
+
+    for _ in range(DISPLAY_HEIGHT):  # y
+        row = list()
+        next_color = ""
+        run_length = 0
+
+        for _ in range(DISPLAY_WIDTH):  # x
+            color = data.pop(0)
 
             # Add a 1x1 box with the appropriate color to the row
             if next_color == "":  # First color of row
@@ -614,9 +635,6 @@ def render_display(app):
                 add_box(row, run_length, next_color)
                 run_length = 1
                 next_color = color
-
-            osx += app["oversample_multiplier"]
-        osy += app["oversample_multiplier"]
 
         # Add the row to the grid
         add_box(row, run_length, color)  # Add last box for row
