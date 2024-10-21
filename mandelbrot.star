@@ -39,6 +39,7 @@ POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
 POI_MAX_ZOOM = 2000000
 POI_MAX_TIME = 4  # Don't exceed POI_MAX_TIME seconds searching for POI
 BRIGHTNESS_MIN = 16 # For brightness normalization, don't bring channel below this
+GAMMA_CORRECTION = 1.2 # Mild gamma correction seems to work best
 
 def main(config):
     seed = time.now().unix
@@ -117,6 +118,8 @@ def normalize_brightness(data):
         subtraction = lowest_channel - BRIGHTNESS_MIN
     multiplier = (255.0 + subtraction) / highest_channel
     
+    print ("Normalizing brightness ... Lowest:", lowest_channel, "Highest:", highest_channel, "Subtract:", subtraction, "Mult:", multiplier)
+
     # Normalize data
     for i in range(len(data)):
         channels = list(hex_to_rgb(data[i]))
@@ -124,7 +127,17 @@ def normalize_brightness(data):
             channels[c] = int(channels[c] * multiplier - subtraction)
         data[i] = rgb_to_hex(*channels)
 
-    print ("Brightness Normalization = Lowest:", lowest_channel, "Highest:", highest_channel, "Subtract:", subtraction, "Mult:", multiplier)
+    return data
+
+# Apply gamma correction
+def gamma_correction(data):
+    print ("Applying gamma correction of", GAMMA_CORRECTION)
+
+    for i in range(len(data)):
+        channels = list(hex_to_rgb(data[i]))
+        for c in range(len(channels)):
+            channels[c] = int(math.pow(channels[c] / 255.0, 1 / GAMMA_CORRECTION) * 255)
+        data[i] = rgb_to_hex(*channels)
     return data
 
 def get_frames(app):
@@ -137,8 +150,12 @@ def get_frames(app):
     frames = list()  # List to store frames of the animation
     data = render_mandelbrot(app, app["target"][0], app["target"][1])
     frames.append(render_display(data))
-    normalized_data = normalize_brightness(data)
-    frames.append(render_display(normalized_data))
+    data = normalize_brightness(data)
+    frames.append(render_display(data))
+    data = gamma_correction(data)
+    frames.append(render_display(data))
+    frames.append(render_display(data))
+    frames.append(render_display(data))
 
     print_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"])
     return frames
