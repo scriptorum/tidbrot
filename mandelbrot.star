@@ -339,9 +339,6 @@ def blend_rgbs(*rgbs):
 
     return rgb_to_hex(int(tr / count), int(tg / count), int(tb / count))
 
-def random_color_tuple():
-    return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
-
 def get_random_gradient(pal_type):
     color = [0, 0, 0]
     primary_channel, channel2, channel3 = 0, 0, 0
@@ -400,7 +397,7 @@ def alter_color_rgb(color):
 # If match_iter is passed something other than False, then it will
 # compare all iterations against this value
 # Returns the number of iterations, or False if they are not all the same
-def generate_line_opt(iteration_map, max_iter, match_iter, pix, set, iter_limit):
+def generate_line_opt(iter_map, max_iter, match_iter, pix, set, iter_limit):
     xm_step, ym_step = 0, 0
 
     # Determine whether the line is vertical or horizontal
@@ -433,7 +430,7 @@ def generate_line_opt(iteration_map, max_iter, match_iter, pix, set, iter_limit)
             xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
-        cache = generate_pixel(iteration_map, max_iter, xp, yp, xm, ym, iter_limit)
+        cache = generate_pixel(iter_map, max_iter, xp, yp, xm, ym, iter_limit)
 
         # Initialize match_iter on first iteration
         if match_iter == -1:
@@ -454,12 +451,12 @@ def alt(obj, field, value):
     c[field] = value
     return c
 
-def flood_fill(iteration_map, area, iter):
+def flood_fill(iter_map, area, iter):
     for y in range(area["y1"], area["y2"] + 1):
         for x in range(area["x1"], area["x2"] + 1):
-            iteration_map['data'][y * iteration_map['width'] + x] = iter
+            iter_map['data'][y * iter_map['width'] + x] = iter
 
-def generate_mandelbrot_area(iteration_map, max_iter, orig_pix, orig_set, iter_limit):
+def generate_mandelbrot_area(iter_map, max_iter, orig_pix, orig_set, iter_limit):
     # Initialize the stack with the first region to process
     stack = [(orig_pix, orig_set)]
 
@@ -478,25 +475,25 @@ def generate_mandelbrot_area(iteration_map, max_iter, orig_pix, orig_set, iter_l
         # A small box can be filled in with the same color if the corners are identical
         done = False
         if dxp <= 6 and dyp <= 6:
-            iter1 = generate_pixel(iteration_map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit)
-            iter2 = generate_pixel(iteration_map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit)
-            iter3 = generate_pixel(iteration_map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit)
-            iter4 = generate_pixel(iteration_map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit)
+            iter1 = generate_pixel(iter_map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit)
+            iter2 = generate_pixel(iter_map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit)
+            iter3 = generate_pixel(iter_map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit)
+            iter4 = generate_pixel(iter_map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit)
             if iter1 == iter2 and iter2 == iter3 and iter3 == iter4:
-                flood_fill(iteration_map, pix, iter1)
+                flood_fill(iter_map, pix, iter1)
                 done = True
 
         # A border with the same iterations can be filled with the same color
         if not done:
-            iter = generate_line_opt(iteration_map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit)
+            iter = generate_line_opt(iter_map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit)
+                iter = generate_line_opt(iter_map, max_iter, iter, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit)
+                iter = generate_line_opt(iter_map, max_iter, iter, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit)
             if iter != False:
-                iter = generate_line_opt(iteration_map, max_iter, iter, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit)
+                iter = generate_line_opt(iter_map, max_iter, iter, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit)
             if iter != False:
-                flood_fill(iteration_map, pix, iter)
+                flood_fill(iter_map, pix, iter)
                 done = True
 
         # Perform vertical split
@@ -527,12 +524,12 @@ def generate_mandelbrot_area(iteration_map, max_iter, orig_pix, orig_set, iter_l
         elif not done:
             for offy in range(0, dyp + 1):
                 for offx in range(0, dxp + 1):
-                    generate_pixel(iteration_map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit)
+                    generate_pixel(iter_map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit)
 
 # Calculates the number of iterations for a point on the map and returns it
 # Tries to gather the pixel data from the cache if available
-def generate_pixel(iteration_map, max_iter, xp, yp, xm, ym, iter_limit):
-    stored_val = iteration_map['data'][yp * iteration_map['width'] + xp] 
+def generate_pixel(iter_map, max_iter, xp, yp, xm, ym, iter_limit):
+    stored_val = iter_map['data'][yp * iter_map['width'] + xp] 
     if stored_val != -1:
         return stored_val
 
@@ -544,7 +541,7 @@ def generate_pixel(iteration_map, max_iter, xp, yp, xm, ym, iter_limit):
         iter = max_iter
 
     # Save iterations for pixel in map
-    iteration_map['data'][yp * iteration_map['width'] + xp] = iter 
+    iter_map['data'][yp * iter_map['width'] + xp] = iter 
 
     return iter
 
@@ -578,11 +575,11 @@ def render_mandelbrot(app, x, y):
     return rgb_map
 
 # Convert iteration map data to RGB map data and downsample
-def downsample(iteration_map, final_width, max_iter, gradient):
+def downsample(iter_map, final_width, max_iter, gradient):
     osx, osy = 0, 0
     color = 0
-    src_height = len(iteration_map['data']) / iteration_map['width']
-    oversample = int(iteration_map['width'] / src_height)
+    src_height = len(iter_map['data']) / iter_map['width']
+    oversample = int(iter_map['width'] / src_height)
     final_height = int(final_width / oversample)
     rgb_map = create_map(final_width, final_height)
 
@@ -592,7 +589,7 @@ def downsample(iteration_map, final_width, max_iter, gradient):
         for x in range(final_width):  # x
             # Get color from single pixel, no oversampling
             if oversample == 1:
-                iter = iteration_map['data'][osy * iteration_map['width'] + osx] 
+                iter = iter_map['data'][osy * iter_map['width'] + osx] 
                 rgb = get_gradient_rgb(gradient, max_iter, iter)
                 color = rgb_to_hex(int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
@@ -601,7 +598,7 @@ def downsample(iteration_map, final_width, max_iter, gradient):
                 samples = []
                 for offy in range(oversample):
                     for offx in range(oversample):
-                        iter = iteration_map['data'][(osy + offy) * iteration_map['width'] + osx + offx] 
+                        iter = iter_map['data'][(osy + offy) * iter_map['width'] + osx + offx] 
                         samples.append(iter)
 
                 rgbs = []
@@ -659,6 +656,9 @@ def add_box(row, run_length, color):
         row.append(BLACK_PIXEL)
     else:
         row.append(render.Box(width = run_length, height = 1, color = color))
+
+def random_color_tuple():
+    return (random.number(0,255), random.number(0,255), random.number(0,255))
 
 def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
