@@ -37,12 +37,17 @@ POI_GRID_X = 8
 POI_GRID_Y = 4
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
 POI_MAX_ZOOM = 100000
-POI_MAX_TIME = 4  # Don't exceed POI_MAX_TIME seconds searching for POI
-BRIGHTNESS_MIN = 16 # For brightness normalization, don't bring channel below this
-GAMMA_CORRECTION = 1.1 # Mild gamma correction seems to work best
+BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
+GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
+MAX_RECURSION = 10  # Max recursion for adaptive AA
+ADAPTIVE_AA_SAMPLES = 4  # Amount of oversampling per each adaptive AA
+
+POI_MAX_TIME = 5  # After these number of seconds, stop POI searching
+SUBSAMPLE_MAX_TIME = 16  # After these number of seconds, stop adaptive AA
+START_TIME = time.now().unix  # Timestamp from start of app
 
 def main(config):
-    seed = 1729531646 #time.now().unix
+    seed = 1729531646  #time.now().unix
     random.seed(seed)
     print("Using random seed:", seed)
     app = {"config": config}
@@ -50,7 +55,8 @@ def main(config):
     # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
     # MULTIPLIER -->  1 = no or mini AA, 2 = 2AA (2x2=4X samples)
     # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
-    oversampling = config.str("oversampling", "4x")
+    oversampling = config.str("oversampling", "adaptive")
+    app["adaptive_aa"] = False
     if oversampling == "none":
         app["oversample"] = 1
     elif oversampling == "2x":
@@ -59,9 +65,12 @@ def main(config):
         app["oversample"] = 4
     elif oversampling == "8x":
         app["oversample"] = 8
+    elif oversampling == "adaptive":
+        app["oversample"] = 1
+        app["adaptive_aa"] = True
     else:
         return err("Unknown oversampling value: %s" % oversampling)
-    print("Oversampling:", app["oversample"])
+    print("Oversampling:", app["oversample"], "Adaptive:", app["adaptive_aa"])
 
     # Calculate internal map dimensions
     app["map_width"] = DISPLAY_WIDTH * app["oversample"]  # Pixels samples per row
@@ -74,9 +83,7 @@ def main(config):
     if app["palette"] != "random" and app["palette"] != "red" and app["palette"] != "green" and app["palette"] != "blue":
         return err("Unrecognized palette type: {}".format(app["palette"]))
     print("Color Palette:", app["palette"])
-    print ("rnd() before getting gradient:", rnd())
-    app["gradient"] = get_random_gradient(app['palette'])
-    print ("rnd() after getting gradient:", rnd())
+    app["gradient"] = get_random_gradient(app["palette"])
 
     # Determine what POI to zoom onto
     app["target"] = 0, 0
@@ -85,8 +92,6 @@ def main(config):
 
     # Generate the animation with all frames
     frames = get_frames(app)
-
-    print ("Final rnd() val:", rnd())
 
     return render.Root(
         delay = 1000,
@@ -98,8 +103,8 @@ def normalize_brightness(map):
     # Determine low and high channel values
     lowest_channel = 255
     highest_channel = 0
-    for i in range(len(map['data'])):
-        channels = hex_to_rgb(map['data'][i])
+    for i in range(len(map["data"])):
+        channels = hex_to_rgb(map["data"][i])
         for c in range(len(channels)):
             if channels[c] < lowest_channel:
                 lowest_channel = channels[c]
@@ -111,25 +116,25 @@ def normalize_brightness(map):
     if lowest_channel > BRIGHTNESS_MIN:
         subtraction = lowest_channel - BRIGHTNESS_MIN
     multiplier = (255.0 + subtraction) / highest_channel
-    
-    print ("Normalizing brightness ... Lowest:", lowest_channel, "Highest:", highest_channel, "Subtract:", subtraction, "Mult:", multiplier)
+
+    print("Normalizing brightness ... Lowest:", lowest_channel, "Highest:", highest_channel, "Subtract:", subtraction, "Mult:", multiplier)
 
     # Normalize data
-    for i in range(len(map['data'])):
-        channels = list(hex_to_rgb(map['data'][i]))
+    for i in range(len(map["data"])):
+        channels = list(hex_to_rgb(map["data"][i]))
         for c in range(len(channels)):
             channels[c] = int(channels[c] * multiplier - subtraction)
-        map['data'][i] = rgb_to_hex(*channels)
+        map["data"][i] = rgb_to_hex(*channels)
 
 # Apply gamma correction
 def gamma_correction(map):
-    print ("Applying gamma correction of", GAMMA_CORRECTION)
+    print("Applying gamma correction of", GAMMA_CORRECTION)
 
-    for i in range(len(map['data'])):
-        channels = list(hex_to_rgb(map['data'][i]))
+    for i in range(len(map["data"])):
+        channels = list(hex_to_rgb(map["data"][i]))
         for c in range(len(channels)):
             channels[c] = int(math.pow(channels[c] / 255.0, 1 / GAMMA_CORRECTION) * 255)
-        map['data'][i] = rgb_to_hex(*channels)
+        map["data"][i] = rgb_to_hex(*channels)
 
 def get_frames(app):
     print("Generating frame")
@@ -170,9 +175,7 @@ def float_range(start, end, num_steps, inclusive = False):
 def choose_poi(app):
     # Find a respectable point of interest
     print("Determining point of interest")
-    print ("rnd() before getting POI:", rnd())
     x, y, best, zoom = find_poi()
-    print ("rnd() after getting POI:", rnd())
 
     # Make it our target
     print("Settled on POI:", x, y, "score:", best)
@@ -182,8 +185,7 @@ def choose_poi(app):
 
 # Finds a respectable point of interest ... allgedly
 def find_poi():
-    start_time = time.now().unix
-    end_time = start_time + POI_MAX_TIME
+    end_time = START_TIME + POI_MAX_TIME
     bestx, besty, best_score, best_zoom = 0, 0, 0, 1
     search_areas = []
     search_areas.append((MINX, MINY, MAXX, MAXY, 1))
@@ -243,7 +245,7 @@ def find_poi():
     # But sometimes the Tidbyt servers throttle their apps
     # So I've gotta sprinkle this check everywhere
     if time.now().unix > end_time:
-        print("Exceeded time limit for POI search:", (time.now().unix - start_time), "seconds")
+        print("Exceeded time limit for POI search:", (time.now().unix - START_TIME), "seconds")
 
     return bestx, besty, best_score, best_zoom
 
@@ -284,12 +286,12 @@ def rgb_to_hex(r, g, b):
 
 def hex_to_rgb(hex_color):
     if type(hex_color) != type("string"):
-            return (255, 0, 255) # Purple to help debug issues
-    hex_color = hex_color.lstrip('#')
+        return (255, 0, 255)  # Purple to help debug issues
+    hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
-    return (r, g, b)    
+    return (r, g, b)
 
 def iter_to_color(gradient, max_iter, iter):
     channels = get_gradient_rgb(gradient, max_iter, iter)
@@ -463,7 +465,9 @@ def alt(obj, field, value):
     c[field] = value
     return c
 
-def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient):
+def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, depth = 0):
+    # print("GenerateMandelbrotArea map:", map["width"], map["height"], "pix:", orig_pix, "set:", orig_set, "limit:", iter_limit, "depth:", depth)
+
     # Initialize the stack with the first region to process
     stack = [(orig_pix, orig_set)]
 
@@ -474,6 +478,8 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
 
         # Pop the last item from the stack
         pix, set = stack.pop()
+
+        # print("Popped off stack:", pix, set)
 
         # Determine some deltas
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
@@ -487,6 +493,7 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient)
             color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient)
             if color1 == color2 and color2 == color3 and color3 == color4:
+                # print("Flood filling small area of same corners")
                 flood_fill(map, pix, color1)
                 done = True
 
@@ -500,11 +507,13 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             if color != False:
                 color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient)
             if color != False:
+                # print("Flood filling area of same border!")
                 flood_fill(map, pix, color)
                 done = True
 
         # Perform vertical split
         if not done and dyp >= 3 and dyp >= dxp:
+            # print("Splitting vertically")
             splityp = int(dyp / 2)
             syp_above = splityp + pix["y1"]
             syp_below = syp_above + 1
@@ -515,8 +524,9 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             stack.append((alt(pix, "y1", syp_below), alt(set, "y1", sym_below)))
             stack.append((alt(pix, "y2", syp_above), alt(set, "y2", sym_above)))
 
-            # Perform horizontal split
+        # Perform horizontal split
         elif not done and dxp >= 3 and dyp >= 3:
+            # print("Splitting horizontally")
             splitxp = int(dxp / 2)
             sxp_left = splitxp + pix["x1"]
             sxp_right = sxp_left + 1
@@ -527,28 +537,56 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             stack.append((alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)))
             stack.append((alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)))
 
-            # This is a small area with differing iterations, calculate/mark them individually
         elif not done:
-            # If time out is nigh or reaching max oversample depth:
-            #     for offy in range(0, dyp + 1):
-            #         for offx in range(0, dxp + 1):
-            #             generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
-            # Otherwise recurse to oversample area
-            #      sub_map = create_map(dxp + 1, dyp + 1)
-            #      SUB_OVERSAMPLE = 4
-            #      sub_pix = { 'x1': 0, 'y1': 0, 'x2': pix["x1"] * SUB_OVERSAMPLE, 'y2': pix['y1'] * SUB_OVERSAMPLE }
-            #      sub_set = { 'x1': set['x1'], 'y1': set['y1'], 'x2': set['x1'] + dxm * dxp, 'y2': set['y1'] + dym * dyp }
-            #      generate_mandelbrot_area(sub_map, max_iter, sub_pix, sub_set, iter_limit)
-            #      downsample sub_map and copy to correct area of main map
+            # This is a small area with differing iterations, calculate/mark them individually
+            if not adaptive_aa or time.now().unix - START_TIME > SUBSAMPLE_MAX_TIME or \
+               depth >= MAX_RECURSION:
+                # If time out is nigh or reaching max oversample depth, render sub area normally
+                # print("Rendering sub area as-is at depth:", depth)
+                # print(pix)
+                # print(set)
+                for offy in range(dyp + 1):
+                    for offx in range(dxp + 1):
+                        generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
 
-            for offy in range(0, dyp + 1):
-                for offx in range(0, dxp + 1):
-                    generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
+            else:
+                # Otherwise recurse to oversample area
+                # print("Generating sub area with ADAPTIVE AA at depth:", depth)
+                area_width, area_height = dxp + 1, dyp + 1
+                sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
+                if sub_map["width"] != area_width * ADAPTIVE_AA_SAMPLES or sub_map["height"] != area_height * ADAPTIVE_AA_SAMPLES:
+                    fail("sub_map failed??", sub_map)
+
+                sub_pix = {"x1": 0, "y1": 0, "x2":sub_map["width"] - 1, "y2":sub_map["height"] - 1}
+                # print("W:", area_width, "H:", area_height, "Oversample:", ADAPTIVE_AA_SAMPLES)
+                # print(sub_pix)
+                # print(set)
+                generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
+                # print("Downsampling after GMA, depth:", depth)
+
+                downsampled_map = downsample(sub_map, area_width)
+                if downsampled_map["width"] != area_width or downsampled_map["height"] != area_height:
+                    fail("Downsample failed??", downsampled_map)
+
+                # copy to sub_map to correct area of full map
+                for dsy in range(downsampled_map["height"]):
+                    for dsx in range(downsampled_map["width"]):
+                        x = pix["x1"] + dsx
+                        y = pix["y1"] + dsy
+
+                        # Ensure that x and y are within the bounds of the original map
+                        if not (x >= 0 and x < map["width"]) or not (y >= 0 and y < map["height"]):
+                            fail("Copying out of bounds: x=", x, "y=", y, "map size=", map['width'], map['height'])
+
+                        # Copy pixel data
+                        map["data"][y * map["width"] + x] = downsampled_map["data"][dsy * downsampled_map["width"] + dsx]
+
 
 # Calculates color for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient):
-    stored_val = map['data'][yp * map['width'] + xp] 
+    # print("Generating pixel at:", xp, yp, "Map:", map["width"], map["height"])
+    stored_val = map["data"][yp * map["width"] + xp]
     if stored_val != -1:
         return stored_val
 
@@ -561,55 +599,55 @@ def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient):
 
     # Save iterations for pixel in map
     color = iter_to_color(gradient, max_iter, iter)
-    map['data'][yp * map['width'] + xp] = color
+    map["data"][yp * map["width"] + xp] = color
 
     return color
 
 def flood_fill(map, area, color):
     for y in range(area["y1"], area["y2"] + 1):
-        for x in range(area["x1"], area["x2"] + 1):            
-            map['data'][y * map['width'] + x] = color
+        for x in range(area["x1"], area["x2"] + 1):
+            map["data"][y * map["width"] + x] = color
 
-def create_map(width, height, fill = -1):
+def create_map(width, height, fill=-1):
     data_size = width * height
-    data = []
-    for _ in range(data_size):
-        data.append(fill)
-    map_obj = { 'data': data, 'width': width, 'height': height }
-    return map_obj
+    data = [fill] * data_size
+    return {"data": data, "width": width, "height": height}
 
 def render_mandelbrot(app, x, y):
     # Determine coordinates
-    half_width = (MAXX - MINX) / app['zoom_level'] / 2.0
-    half_height = (MAXY - MINY) / app['zoom_level'] / 2.0
+    half_width = (MAXX - MINX) / app["zoom_level"] / 2.0
+    half_height = (MAXY - MINY) / app["zoom_level"] / 2.0
     minx, miny = x - half_width, y - half_height
     maxx, maxy = x + half_width, y + half_height
-    app['center'] = (x, y)
+    app["center"] = (x, y)
 
     # Create the map
-    map = create_map(app['map_width'], app['map_height'])
-    app['map'] = map
+    map = create_map(app["map_width"], app["map_height"])
+    app["map"] = map
 
     # Generate the map
-    pix = {'x1': 0, 'y1': 0, 'x2': app['max_pixel_x'], 'y2': app['max_pixel_y']}
-    set = {'x1': minx, 'y1': miny, 'x2': maxx, 'y2': maxy}
-    generate_mandelbrot_area(app['map'], app['max_iter'], pix, set, app['max_iter'], app['gradient'])
+    pix = {"x1": 0, "y1": 0, "x2": app["max_pixel_x"], "y2": app["max_pixel_y"]}
+    set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
+    generate_mandelbrot_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive_aa"])
 
     # Render an iteration map to an RGB map of the display size
-    map = downsample(app['map'], DISPLAY_WIDTH)
+    map = downsample(app["map"], DISPLAY_WIDTH)
     return map
 
 # Downsample display RGB map from oversampled map
 def downsample(map, final_width):
-    src_height = len(map['data']) / map['width']
-    oversample = int(map['width'] / src_height)
-    final_height = int(final_width / oversample)
-
-    if oversample == 1:
+    if map["width"] == final_width:
         return map
 
-    osx, osy = 0, 0
-    color = 0
+    # print("Downsampling", map["width"], map["height"], "to:", final_width)
+    if len(map["data"]) != map["width"] * map["height"]:
+        fail("Map size is:", len(map["data"]))
+    
+    src_height = len(map["data"]) // map["width"]  # Ensure integer division
+    oversample = int(map["width"] / final_width)  # Correct oversample calculation
+    final_height = int(src_height / oversample)
+
+    osy = 0
     new_map = create_map(final_width, final_height)
 
     for y in range(final_height):  # y
@@ -619,16 +657,22 @@ def downsample(map, final_width):
             colors = []
             for offy in range(oversample):
                 for offx in range(oversample):
-                    color = map['data'][(osy + offy) * map['width'] + osx + offx] 
-                    colors.append(color)
+                    if osx + offx < map["width"] and osy + offy < src_height:
+                        color = map["data"][(osy + offy) * map["width"] + osx + offx]
+                        colors.append(color)
 
-            color = blend_colors(*colors)
-            new_map['data'][y * final_width + x] = color
-            
+            if colors:
+                color = blend_colors(*colors)
+            else:
+                color = map["data"][osy * map["width"] + osx]  # Fallback color
+
+            new_map["data"][y * final_width + x] = color
+
             osx += oversample
         osy += oversample
-    
-    return new_map # Returns map
+
+    return new_map  # Returns map
+
 
 # Converts an rgb map to a Tidbyt Column made up of Rows made up of Boxes
 def render_tidbyt(map):
@@ -637,8 +681,8 @@ def render_tidbyt(map):
     color = 0
     index = 0
 
-    if len(map['data']) != DISPLAY_WIDTH * DISPLAY_HEIGHT:
-        return err("Final map must be display size" + len(map['data']), False)
+    if len(map["data"]) != DISPLAY_WIDTH * DISPLAY_HEIGHT:
+        return err("Final map must be display size" + len(map["data"]), False)
 
     for _ in range(DISPLAY_HEIGHT):  # y
         row = list()
@@ -646,8 +690,8 @@ def render_tidbyt(map):
         run_length = 0
 
         for _ in range(DISPLAY_WIDTH):  # x
-            color = map['data'][index]
-            index +=1
+            color = map["data"][index]
+            index += 1
 
             # Add a 1x1 box with the appropriate color to the row
             if next_color == "":  # First color of row
@@ -675,7 +719,7 @@ def add_box(row, run_length, color):
         row.append(render.Box(width = run_length, height = 1, color = color))
 
 def random_color_tuple():
-    return (random.number(0,255), random.number(0,255), random.number(0,255))
+    return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
 
 def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
@@ -689,12 +733,13 @@ def get_schema():
                 name = "Oversampling",
                 desc = "Oversampling Method",
                 icon = "border-none",
-                default = "none",
+                default = "adaptive",
                 options = [
                     schema.Option(value = "none", display = "None"),
                     schema.Option(value = "2x", display = "2X AA (slower)"),
                     schema.Option(value = "4x", display = "4X AA (much slower)"),
                     schema.Option(value = "8x", display = "8X AA (imagine even slower)"),
+                    schema.Option(value = "adaptive", display = "Adaptive AA"),
                 ],
             ),
             schema.Dropdown(
@@ -808,5 +853,5 @@ def err(msg, include_root = True):
 
     if include_root:
         return render.Root(text)
-    
+
     return text
