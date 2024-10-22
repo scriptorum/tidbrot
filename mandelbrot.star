@@ -8,12 +8,14 @@
 #     so if it is interrupted, it can look jarring
 # - Time out prediction:
 #   + Use to adjust zoom / iteration limit / POI search points
+# - Cache last POI URL
 #
 load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
+load("cache.star", "cache")
 
 MIN_ITER = 100                  # minimum iterations, raise if initial zoom is > 1
 ZOOM_TO_ITER = 1.0              # 1.0 standard, less for faster calc, more for better accuracy
@@ -47,7 +49,7 @@ GAMMA_MAX_TIME = 29             # Skip gamma correction if max time elapsed
 START_TIME = time.now().unix    # Timestamp at start of app
 
 def main(config):
-    seed = time.now().unix
+    seed = int(config.str("seed", time.now().unix))
     random.seed(seed)
     print("Using random seed:", seed)
     app = {"config": config}
@@ -88,16 +90,18 @@ def main(config):
     # Determine what POI to zoom onto
     app["target"] = 0, 0
     choose_poi(app)  # Choose a point of interest
+    
     print("Zoom Level:", app["zoom_level"])
 
     # Generate the animation with all frames
     frames = get_frames(app)
 
+    # Generate root object
     root = render.Root(
-        delay = 1000,
         child = render.Box(render.Animation(frames)),
     )
 
+    # Profiling is fun
     print("Elapsed time:", time.now().unix - START_TIME)
 
     return root
@@ -159,19 +163,18 @@ def get_frames(app):
     tidbytMap = render_tidbyt(map)
     frames.append(tidbytMap)
 
-    print_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"])
+    print(get_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"]))
     return frames
 
 # Makes for easier debugging to compare results to an existing renderer
-def print_link(x, y, iter, zoom):
-    print(
+def get_link(x, y, iter, zoom):
+    return \
         "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
             x,
             y,
             iter,
             str(int(zoom * 600)),
-        ),
-    )
+        )
 
 def float_range(start, end, num_steps, inclusive = False):
     step_size = (float(end) - float(start)) / num_steps
@@ -192,6 +195,9 @@ def choose_poi(app):
     app["target"] = x, y
     app["zoom_level"] = zoom
     app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
+    link = get_link(x, y, app["max_iter"], zoom)
+    cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
+
 
 # Finds a respectable point of interest ... allgedly
 def find_poi():
@@ -249,7 +255,7 @@ def find_poi():
         if score > best_score:
             bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny) / 2, score, zoom
             print("Found better POI:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
-            print_link(bestx, besty, iter_limit, best_zoom)
+            print(get_link(bestx, besty, iter_limit, best_zoom))
 
     # In theory this should stop shortly after hitting POI_MAX_TIME
     # But sometimes the Tidbyt servers throttle their apps
@@ -719,6 +725,9 @@ def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
 
 def get_schema():
+    link = cache.get("last_url")
+    if link == None:
+        link = "N/A"
     return schema.Schema(
         version = "1",
         fields = [
@@ -733,7 +742,7 @@ def get_schema():
                     schema.Option(value = "2x", display = "2X AA (slower)"),
                     schema.Option(value = "4x", display = "4X AA (much slower)"),
                     schema.Option(value = "8x", display = "8X AA (imagine even slower)"),
-                    schema.Option(value = "adaptive", display = "Adaptive AA"),
+                    schema.Option(value = "adaptive", display = "Adaptive AA (recommended)"),
                 ],
             ),
             schema.Dropdown(
@@ -747,22 +756,6 @@ def get_schema():
                     schema.Option(value = "red", display = "Red-ish"),
                     schema.Option(value = "blue", display = "Blue-ish"),
                     schema.Option(value = "green", display = "Green-ish"),
-                ],
-            ),
-            schema.Dropdown(
-                id = "quantize",
-                name = "Color Quantization",
-                desc = "Shades per color channel",
-                icon = "umbrella_beach",
-                default = "8",
-                options = [
-                    schema.Option(value = "4", display = "4 shades"),
-                    schema.Option(value = "8", display = "8 shades"),
-                    schema.Option(value = "16", display = "16 shades"),
-                    schema.Option(value = "32", display = "32 shades"),
-                    schema.Option(value = "64", display = "64 shades"),
-                    schema.Option(value = "128", display = "128 shades"),
-                    schema.Option(value = "255", display = "256 shades"),
                 ],
             ),
             schema.Dropdown(
