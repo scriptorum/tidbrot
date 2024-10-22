@@ -8,14 +8,13 @@
 #     so if it is interrupted, it can look jarring
 # - Time out prediction:
 #   + Use to adjust zoom / iteration limit / POI search points
-# - Cache last POI URL
 #
 load("math.star", "math")
 load("random.star", "random")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-load("cache.star", "cache")
+# load("cache.star", "cache")
 
 MIN_ITER = 100                  # minimum iterations, raise if initial zoom is > 1
 ZOOM_TO_ITER = 1.0              # 1.0 standard, less for faster calc, more for better accuracy
@@ -196,7 +195,7 @@ def choose_poi(app):
     app["zoom_level"] = zoom
     app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
     link = get_link(x, y, app["max_iter"], zoom)
-    cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
+    # cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
 
 
 # Finds a respectable point of interest ... allgedly
@@ -725,7 +724,7 @@ def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
 
 def get_schema():
-    link = cache.get("last_url")
+    # link = cache.get("last_url")
     if link == None:
         link = "N/A"
     return schema.Schema(
