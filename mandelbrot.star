@@ -4,16 +4,10 @@
 #   + Add extra points outside of area (an additional 4x2 perhaps)
 #   + Perform fitness scores of centered at 0,0 +/- 2,1 and keep best
 # - Adaptive AA:
-#   + Start with 64x32 display
-#   + If "small area with differing iterations" oversample that region
-#   + Stop at max oversample
-#   + Combine with timeout prediction at calc all oversamples at the same level before
-#     sampling any deeper to dynamically stop when timeout is nigh
+#   + Need to perform progressive AA, adaptive AA is selective but not progressive enough,
+#     so if it is interrupted, it can look jarring
 # - Time out prediction:
-#   + Time mandelbrot calc for broad POI check
-#   + Extrapolate to estimate time to calculate 64x32 no supersample
-#   + Extrapolate to estimate depth of supersample possible under time limit
-#   + Use to adjust zoom / super sample / iteration limit / POI search points
+#   + Use to adjust zoom / iteration limit / POI search points
 #
 load("math.star", "math")
 load("random.star", "random")
@@ -21,34 +15,39 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
-MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
-ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
-ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
-DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
-DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
-NUM_GRADIENT_STEPS = 64  # Higher = more color variation
-GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-CTRX, CTRY = -0.75, 0  # mandelbrot center
-MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
-BLACK_COLOR = "#000000"  # Shorthand for black color
+MIN_ITER = 100                  # minimum iterations, raise if initial zoom is > 1
+ZOOM_TO_ITER = 1.0              # 1.0 standard, less for faster calc, more for better accuracy
+ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
+DISPLAY_WIDTH = 64              # Tidbyt is 64 pixels wide
+DISPLAY_HEIGHT = 32             # Tidbyt is 32 pixels high
+NUM_GRADIENT_STEPS = 64         # Higher = more color variation
+GRADIENT_SCALE_FACTOR = 1.55    # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
+CTRX, CTRY = -0.75, 0           # Mandelbrot center
+MINX, MINY, MAXX, MAXY = \
+    -2.5, -0.875, 1.0, 0.8753   # Bounds to use for mandelbrot set
+BLACK_COLOR = "#000000"         # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
-BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
-POI_GRID_X = 8
-POI_GRID_Y = 4
-POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
-POI_MAX_ZOOM = 100000
-BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
-GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
-MAX_RECURSION = 1  # Max recursion for adaptive AA
-ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
-BASE_ADAPTIVE_AA = 2
-
-POI_MAX_TIME = 3  # After these number of seconds, stop POI searching
-SUBSAMPLE_MAX_TIME = 27  # After these number of seconds, force stop adaptive AA
-START_TIME = time.now().unix  # Timestamp from start of app
+BLACK_PIXEL = render.Box(
+    width = 1, 
+    height = 1, 
+    color = BLACK_COLOR)        # Pregenerated 1x1 pixel black box
+POI_GRID_X = 8                  # When exploring POIs, divides area into XY grid
+POI_GRID_Y = 4                  # and checks random pixel in grid cell
+POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X   # This represents magnification of ...
+POI_MAX_ZOOM = 10000            # Don't magnify like a crazy person
+BRIGHTNESS_MIN = 16             # For brightness normalization, don't bring channel below this
+GAMMA_CORRECTION = 1.1          # Mild gamma correction seems to work best
+MAX_RECURSION = 1               # Max recursion for adaptive AA
+ADAPTIVE_AA_SAMPLES = 3         # Amount of oversampling per each adaptive AA
+BASE_ADAPTIVE_AA = 2            # Minimum oversampling Adaptive AA starts with
+POI_MAX_TIME = 3                # Go with best POI if max time elapsed
+SUBSAMPLE_MAX_TIME = 26         # Force stop Adaptive AA if max time elapsed
+NORMALIZE_MAX_TIME = 28         # Skip normalization if max time elapsed
+GAMMA_MAX_TIME = 29             # Skip gamma correction if max time elapsed
+START_TIME = time.now().unix    # Timestamp at start of app
 
 def main(config):
-    seed = 1729531646  #time.now().unix
+    seed = time.now().unix
     random.seed(seed)
     print("Using random seed:", seed)
     app = {"config": config}
@@ -94,10 +93,14 @@ def main(config):
     # Generate the animation with all frames
     frames = get_frames(app)
 
-    return render.Root(
+    root = render.Root(
         delay = 1000,
         child = render.Box(render.Animation(frames)),
     )
+
+    print("Elapsed time:", time.now().unix - START_TIME)
+
+    return root
 
 # Ya know, it uh, normalizes ... the brightness
 def normalize_brightness(map):
@@ -144,9 +147,15 @@ def get_frames(app):
     # to render on Tidbyt servers with any degree of quality
     frames = list()  # List to store frames of the animation
     map = render_mandelbrot(app, app["target"][0], app["target"][1])
-    normalize_brightness(map)
-    if GAMMA_CORRECTION > 1.0:
-        gamma_correction(map)
+    if time.now().unix - START_TIME < NORMALIZE_MAX_TIME:
+        normalize_brightness(map)
+        if GAMMA_CORRECTION > 1.0:
+            if time.now().unix - START_TIME < GAMMA_MAX_TIME:
+                gamma_correction(map)
+            else:
+                print("Skipping gamma correction, no time left")
+    else:
+        print("Skipping normalization, no time left")
     tidbytMap = render_tidbyt(map)
     frames.append(tidbytMap)
 
