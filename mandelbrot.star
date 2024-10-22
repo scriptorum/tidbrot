@@ -39,11 +39,12 @@ POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X
 POI_MAX_ZOOM = 100000
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
 GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
-MAX_RECURSION = 10  # Max recursion for adaptive AA
-ADAPTIVE_AA_SAMPLES = 4  # Amount of oversampling per each adaptive AA
+MAX_RECURSION = 1  # Max recursion for adaptive AA
+ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
+BASE_ADAPTIVE_AA = 2
 
-POI_MAX_TIME = 5  # After these number of seconds, stop POI searching
-SUBSAMPLE_MAX_TIME = 16  # After these number of seconds, stop adaptive AA
+POI_MAX_TIME = 3  # After these number of seconds, stop POI searching
+SUBSAMPLE_MAX_TIME = 27  # After these number of seconds, force stop adaptive AA
 START_TIME = time.now().unix  # Timestamp from start of app
 
 def main(config):
@@ -66,7 +67,7 @@ def main(config):
     elif oversampling == "8x":
         app["oversample"] = 8
     elif oversampling == "adaptive":
-        app["oversample"] = 1
+        app["oversample"] = BASE_ADAPTIVE_AA
         app["adaptive_aa"] = True
     else:
         return err("Unknown oversampling value: %s" % oversampling)
@@ -485,8 +486,7 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
         dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
 
-        # A small box can be filled in with the same color if the corners are identical
-        done = False
+        # OPTIMIZATION: A small box can be filled in with the same color if the corners are identical
         if dxp <= 6 and dyp <= 6:
             color1 = generate_pixel(map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit, gradient)
             color2 = generate_pixel(map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit, gradient)
@@ -495,24 +495,23 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             if color1 == color2 and color2 == color3 and color3 == color4:
                 # print("Flood filling small area of same corners")
                 flood_fill(map, pix, color1)
-                done = True
+                continue
 
-        # A border with the same iterations can be filled with the same color
-        if not done:
-            color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient)
-            if color != False:
-                color = generate_line_opt(map, max_iter, color, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit, gradient)
-            if color != False:
-                color = generate_line_opt(map, max_iter, color, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit, gradient)
-            if color != False:
-                color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient)
-            if color != False:
-                # print("Flood filling area of same border!")
-                flood_fill(map, pix, color)
-                done = True
+        # OPTIMIZATION: A border with the same iterations can be filled with the same color
+        color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient)
+        if color != False:
+            color = generate_line_opt(map, max_iter, color, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit, gradient)
+        if color != False:
+            color = generate_line_opt(map, max_iter, color, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit, gradient)
+        if color != False:
+            color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient)
+        if color != False:
+            # print("Flood filling area of same border!")
+            flood_fill(map, pix, color)
+            continue
 
         # Perform vertical split
-        if not done and dyp >= 3 and dyp >= dxp:
+        if dyp >= 3 and dyp >= dxp:
             # print("Splitting vertically")
             splityp = int(dyp / 2)
             syp_above = splityp + pix["y1"]
@@ -523,9 +522,10 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             # Add sub-regions to the stack
             stack.append((alt(pix, "y1", syp_below), alt(set, "y1", sym_below)))
             stack.append((alt(pix, "y2", syp_above), alt(set, "y2", sym_above)))
+            continue
 
         # Perform horizontal split
-        elif not done and dxp >= 3 and dyp >= 3:
+        if dxp >= 3 and dyp >= 3:
             # print("Splitting horizontally")
             splitxp = int(dxp / 2)
             sxp_left = splitxp + pix["x1"]
@@ -536,50 +536,35 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             # Add sub-regions to the stack
             stack.append((alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)))
             stack.append((alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)))
+            continue
 
-        elif not done:
-            # This is a small area with differing iterations, calculate/mark them individually
-            if not adaptive_aa or time.now().unix - START_TIME > SUBSAMPLE_MAX_TIME or \
-               depth >= MAX_RECURSION:
-                # If time out is nigh or reaching max oversample depth, render sub area normally
-                # print("Rendering sub area as-is at depth:", depth)
-                # print(pix)
-                # print(set)
-                for offy in range(dyp + 1):
-                    for offx in range(dxp + 1):
-                        generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
+        # Quit early to avoid timeout error
+        elapsed = time.now().unix - START_TIME
+        if adaptive_aa and elapsed > SUBSAMPLE_MAX_TIME:
+            adaptive_aa = False
+            print("Adaptive AA timeout! Elapsed:", elapsed)
 
-            else:
-                # Otherwise recurse to oversample area
-                # print("Generating sub area with ADAPTIVE AA at depth:", depth)
-                area_width, area_height = dxp + 1, dyp + 1
-                sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
-                if sub_map["width"] != area_width * ADAPTIVE_AA_SAMPLES or sub_map["height"] != area_height * ADAPTIVE_AA_SAMPLES:
-                    fail("sub_map failed??", sub_map)
+        # This is a small area with differing iterations, calculate/mark them individually
+        if not adaptive_aa or depth >= MAX_RECURSION:
+            # Generate all pixels for this area
+            for offy in range(dyp + 1):
+                for offx in range(dxp + 1):
+                    generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
+            continue
 
-                sub_pix = {"x1": 0, "y1": 0, "x2":sub_map["width"] - 1, "y2":sub_map["height"] - 1}
-                # print("W:", area_width, "H:", area_height, "Oversample:", ADAPTIVE_AA_SAMPLES)
-                # print(sub_pix)
-                # print(set)
-                generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
-                # print("Downsampling after GMA, depth:", depth)
+        # Oversample this area
+        area_width, area_height = dxp + 1, dyp + 1
+        sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
+        sub_pix = {"x1": 0, "y1": 0, "x2":sub_map["width"] - 1, "y2":sub_map["height"] - 1}
+        generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
+        downsampled_map = downsample(sub_map, area_width)
 
-                downsampled_map = downsample(sub_map, area_width)
-                if downsampled_map["width"] != area_width or downsampled_map["height"] != area_height:
-                    fail("Downsample failed??", downsampled_map)
-
-                # copy to sub_map to correct area of full map
-                for dsy in range(downsampled_map["height"]):
-                    for dsx in range(downsampled_map["width"]):
-                        x = pix["x1"] + dsx
-                        y = pix["y1"] + dsy
-
-                        # Ensure that x and y are within the bounds of the original map
-                        if not (x >= 0 and x < map["width"]) or not (y >= 0 and y < map["height"]):
-                            fail("Copying out of bounds: x=", x, "y=", y, "map size=", map['width'], map['height'])
-
-                        # Copy pixel data
-                        map["data"][y * map["width"] + x] = downsampled_map["data"][dsy * downsampled_map["width"] + dsx]
+        # copy to sub_map to correct area of full map
+        for dsy in range(downsampled_map["height"]):
+            for dsx in range(downsampled_map["width"]):
+                x = pix["x1"] + dsx
+                y = pix["y1"] + dsy
+                map["data"][y * map["width"] + x] = downsampled_map["data"][dsy * downsampled_map["width"] + dsx]
 
 
 # Calculates color for a point on the map and returns them
