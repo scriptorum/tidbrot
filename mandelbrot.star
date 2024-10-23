@@ -16,36 +16,57 @@ load("schema.star", "schema")
 load("time.star", "time")
 # load("cache.star", "cache")
 
-MIN_ITER = 100                  # minimum iterations, raise if initial zoom is > 1
-ZOOM_TO_ITER = 1.0              # 1.0 standard, less for faster calc, more for better accuracy
-ESCAPE_THRESHOLD = 4.0          # 4.0 standard, less for faster calc, less accuracy
-DISPLAY_WIDTH = 64              # Tidbyt is 64 pixels wide
-DISPLAY_HEIGHT = 32             # Tidbyt is 32 pixels high
-NUM_GRADIENT_STEPS = 64         # Higher = more color variation
-GRADIENT_SCALE_FACTOR = 1.55    # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-CTRX, CTRY = -0.75, 0           # Mandelbrot center
+MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
+ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
+ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
+DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
+DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
+NUM_GRADIENT_STEPS = 64  # Higher = more color variation
+GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
+CTRX, CTRY = -0.75, 0  # Mandelbrot center
 MINX, MINY, MAXX, MAXY = \
-    -2.5, -0.875, 1.0, 0.8753   # Bounds to use for mandelbrot set
-BLACK_COLOR = "#000000"         # Shorthand for black color
+    -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
+BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
 BLACK_PIXEL = render.Box(
-    width = 1, 
-    height = 1, 
-    color = BLACK_COLOR)        # Pregenerated 1x1 pixel black box
-POI_GRID_X = 8                  # When exploring POIs, divides area into XY grid
-POI_GRID_Y = 4                  # and checks random pixel in grid cell
-POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X   # This represents magnification of ...
-POI_MAX_ZOOM = 10000            # Don't magnify like a crazy person
-BRIGHTNESS_MIN = 16             # For brightness normalization, don't bring channel below this
-GAMMA_CORRECTION = 1.1          # Mild gamma correction seems to work best
-MAX_RECURSION = 1               # Max recursion for adaptive AA
-ADAPTIVE_AA_SAMPLES = 3         # Amount of oversampling per each adaptive AA
-BASE_ADAPTIVE_AA = 2            # Minimum oversampling Adaptive AA starts with
-POI_MAX_TIME = 3                # Go with best POI if max time elapsed
-SUBSAMPLE_MAX_TIME = 26         # Force stop Adaptive AA if max time elapsed
-NORMALIZE_MAX_TIME = 28         # Skip normalization if max time elapsed
-GAMMA_MAX_TIME = 29             # Skip gamma correction if max time elapsed
-START_TIME = time.now().unix    # Timestamp at start of app
+    width = 1,
+    height = 1,
+    color = BLACK_COLOR,
+)  # Pregenerated 1x1 pixel black box
+POI_GRID_X = 8  # When exploring POIs, divides area into XY grid
+POI_GRID_Y = 4  # and checks random pixel in grid cell
+POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
+POI_MAX_ZOOM = 10000  # Don't magnify like a crazy person
+BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
+GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
+MAX_RECURSION = 1  # Max recursion for adaptive AA
+ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
+BASE_ADAPTIVE_AA = 2  # Minimum oversampling Adaptive AA starts with
+POI_MAX_TIME = 3  # Go with best POI if max time elapsed
+SUBSAMPLE_MAX_TIME = 26  # Force stop Adaptive AA if max time elapsed
+NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
+CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
+GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
+START_TIME = time.now().unix  # Timestamp at start of app
+
+PREDEFINED_GRADIENTS_NUM_CYCLES = 4
+PREDEFINED_GRADIENTS = {
+    "sunburst":   ((255, 0, 0), (255, 255, 0)),
+    "neon-rose":  ((255, 0, 0), (255, 0, 255)),
+    "spring-lime": ((0, 255, 0), (255, 255, 0)),
+    "seafoam":   ((0, 255, 0), (0, 255, 255)),
+    "ocean-wave": ((0, 0, 255), (0, 255, 255)),
+    "electric-violet": ((0, 0, 255), (255, 0, 255)),
+    "sunset-glow": ((0, 0, 255), (128, 0, 128), (255, 0, 0)),
+    "holly-jolly": ((0, 255, 0), (255, 255, 0)),
+    "autumn-glow": ((0, 255, 0), (255, 255, 0), (255, 165, 0)),
+    "flame": ((255, 0, 0), (255, 165, 0), (255, 255, 0)),
+    "twilight": ((0, 255, 255), (0, 0, 255), (128, 0, 128)),
+    "spectrum": ((255, 0, 0), (255, 127, 0), (255, 255, 0), (0, 255, 0), (0, 0, 255), (75, 0, 130), (148, 0, 211)),
+    "lavender-fields": ((255, 182, 193), (230, 230, 250)),
+    "midnight": ((0, 0, 128), (0, 0, 255), (75, 0, 130)) 
+}
+
 
 def main(config):
     seed = int(config.str("seed", time.now().unix))
@@ -81,15 +102,15 @@ def main(config):
 
     # Generate a color gradient
     app["palette"] = config.str("palette", "random")
-    if app["palette"] != "random" and app["palette"] != "red" and app["palette"] != "green" and app["palette"] != "blue":
+    if app["palette"] != "random" and app["palette"] not in PREDEFINED_GRADIENTS:
         return err("Unrecognized palette type: {}".format(app["palette"]))
     print("Color Palette:", app["palette"])
-    app["gradient"] = get_random_gradient(app["palette"])
+    app["gradient"] = generate_gradient(app["palette"])
 
     # Determine what POI to zoom onto
     app["target"] = 0, 0
     choose_poi(app)  # Choose a point of interest
-    
+
     print("Zoom Level:", app["zoom_level"])
 
     # Generate the animation with all frames
@@ -97,6 +118,7 @@ def main(config):
 
     # Generate root object
     root = render.Root(
+        delay = 15000,
         child = render.Box(render.Animation(frames)),
     )
 
@@ -130,7 +152,7 @@ def normalize_brightness(map):
     for i in range(len(map["data"])):
         channels = list(hex_to_rgb(map["data"][i]))
         for c in range(len(channels)):
-            channels[c] = int(channels[c] * multiplier - subtraction)
+            channels[c] = min(255, int(channels[c] * multiplier - subtraction))
         map["data"][i] = rgb_to_hex(*channels)
 
 # Apply gamma correction
@@ -140,8 +162,49 @@ def gamma_correction(map):
     for i in range(len(map["data"])):
         channels = list(hex_to_rgb(map["data"][i]))
         for c in range(len(channels)):
-            channels[c] = int(math.pow(channels[c] / 255.0, 1 / GAMMA_CORRECTION) * 255)
+            channels[c] = min(255, int(math.pow(channels[c] / 255.0, 1 / GAMMA_CORRECTION) * 255))
         map["data"][i] = rgb_to_hex(*channels)
+
+# Apply contrast correction
+def contrast_correction(map, min_scale = 0, max_scale = 255):
+    print("Correcting contrast")
+
+    # Convert all hex colors to RGB tuples
+    rgb_data = [hex_to_rgb(color) for color in map["data"]]
+
+    # Separate the RGB channels
+    reds = [color[0] for color in rgb_data]
+    greens = [color[1] for color in rgb_data]
+    blues = [color[2] for color in rgb_data]
+
+    # Find the min and max values for each channel
+    min_r, max_r = min(reds), max(reds)
+    min_g, max_g = min(greens), max(greens)
+    min_b, max_b = min(blues), max(blues)
+
+    # Avoid division by zero
+    range_r = max_r - min_r if max_r != min_r else 1
+    range_g = max_g - min_g if max_g != min_g else 1
+    range_b = max_b - min_b if max_b != min_b else 1
+
+    # Function to stretch one color channel
+    def stretch_channel(value, min_val, range_val):
+        return min(255, int(((value - min_val) * (max_scale - min_scale) / range_val) + min_scale))
+
+    # Apply contrast stretching to each channel
+    stretched_data = [
+        (
+            stretch_channel(color[0], min_r, range_r),
+            stretch_channel(color[1], min_g, range_g),
+            stretch_channel(color[2], min_b, range_b),
+        )
+        for color in rgb_data
+    ]
+
+    # Convert the stretched RGB values back to hex colors
+    map["data"] = [rgb_to_hex(*color) for color in stretched_data]
+
+    return map
 
 def get_frames(app):
     print("Generating frame")
@@ -152,11 +215,17 @@ def get_frames(app):
     map = render_mandelbrot(app, app["target"][0], app["target"][1])
     if time.now().unix - START_TIME < NORMALIZE_MAX_TIME:
         normalize_brightness(map)
-        if GAMMA_CORRECTION > 1.0:
-            if time.now().unix - START_TIME < GAMMA_MAX_TIME:
-                gamma_correction(map)
-            else:
-                print("Skipping gamma correction, no time left")
+
+        if time.now().unix - START_TIME < CONTRAST_MAX_TIME:
+            contrast_correction(map)
+
+            if GAMMA_CORRECTION > 1.0:
+                if time.now().unix - START_TIME < GAMMA_MAX_TIME:
+                    gamma_correction(map)
+                else:
+                    print("Skipping gamma correction, no time left")
+        else:
+            print("Skipping contrast correction, no time left")
     else:
         print("Skipping normalization, no time left")
     tidbytMap = render_tidbyt(map)
@@ -167,13 +236,12 @@ def get_frames(app):
 
 # Makes for easier debugging to compare results to an existing renderer
 def get_link(x, y, iter, zoom):
-    return \
-        "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
-            x,
-            y,
-            iter,
-            str(int(zoom * 600)),
-        )
+    return "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
+        x,
+        y,
+        iter,
+        str(int(zoom * 600)),
+    )
 
 def float_range(start, end, num_steps, inclusive = False):
     step_size = (float(end) - float(start)) / num_steps
@@ -194,9 +262,10 @@ def choose_poi(app):
     app["target"] = x, y
     app["zoom_level"] = zoom
     app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
-    link = get_link(x, y, app["max_iter"], zoom)
-    # cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
 
+    print(get_link(x, y, app["max_iter"], zoom))
+
+    # cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
 
 # Finds a respectable point of interest ... allgedly
 def find_poi():
@@ -320,7 +389,7 @@ def get_gradient_rgb(gradient, max_iter, iter):
         fail("Bad iterations in get_gradient_rgb:", iter, "max:", max_iter)
 
     # Convert iterations to a color
-    t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / NUM_GRADIENT_STEPS) % 1.0
+    t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / len(gradient)) % 1.0
 
     # Number of keyframes
     num_keyframes = len(gradient) - 1
@@ -368,45 +437,25 @@ def blend_colors(*colors):
 
     return rgb_to_hex(int(tr / count), int(tg / count), int(tb / count))
 
-def get_random_gradient(pal_type):
-    color = [0, 0, 0]
-    primary_channel, channel2, channel3 = 0, 0, 0
-
-    if pal_type == "random":
-        color = list(random_color_tuple())
-    else:
-        if pal_type == "red":
-            primary_channel = 0
-        elif pal_type == "green":
-            primary_channel = 1
-        elif pal_type == "blue":
-            primary_channel = 2
-        color[primary_channel] = 255
-        channel2 = (primary_channel + 1) % 3
-        channel3 = (primary_channel + 2) % 3
+# Generates a random or predefined color gradient
+def generate_gradient(pal_type):
+    print("Generating color gradient")
 
     gradient = []
-    for step in range(0, NUM_GRADIENT_STEPS):
-        if pal_type == "random":
+    color = list(random_color_tuple())
+
+    # Random gradient
+    if pal_type == "random":
+        for _ in range(0, NUM_GRADIENT_STEPS):
             gradient.append(tuple(color))
             color = alter_color_rgb(color)
-        else:
-            # Deterministic calculation for the primary channel using sine wave
-            phase = step / NUM_GRADIENT_STEPS * 2 * math.pi  # Full cycle for primary channel
-            intensity = (math.sin(phase) + 1) / 2 * 255
+        return gradient
 
-            # Set the primary channel with smooth transition
-            color[primary_channel] = int(intensity)
-
-            # Use independent frequencies for the secondary and tertiary channels
-            freq2 = NUM_GRADIENT_STEPS * 0.75  # Slightly faster frequency for channel2
-            freq3 = NUM_GRADIENT_STEPS * 0.5  # Even faster frequency for channel3
-
-            # Apply independent sine variations for the secondary and tertiary channels
-            color[channel2] = int(((math.sin(step / freq2 * 2 * math.pi) + 1) / 2) * 255 * 0.6)  # Adjust scale to 60%
-            color[channel3] = int(((math.sin(step / freq3 * 2 * math.pi) + 1) / 2) * 255 * 0.4)  # Adjust scale to 40%
-
-            gradient.append(tuple(color))
+    # Predefined gradient
+    colors = PREDEFINED_GRADIENTS[pal_type]
+    for _ in range(PREDEFINED_GRADIENTS_NUM_CYCLES):
+        for color in colors:
+            gradient.append(color)    
 
     return gradient
 
@@ -569,7 +618,7 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
         # Oversample this area
         area_width, area_height = dxp + 1, dyp + 1
         sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
-        sub_pix = {"x1": 0, "y1": 0, "x2":sub_map["width"] - 1, "y2":sub_map["height"] - 1}
+        sub_pix = {"x1": 0, "y1": 0, "x2": sub_map["width"] - 1, "y2": sub_map["height"] - 1}
         generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
         downsampled_map = downsample(sub_map, area_width)
 
@@ -579,7 +628,6 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
                 x = pix["x1"] + dsx
                 y = pix["y1"] + dsy
                 map["data"][y * map["width"] + x] = downsampled_map["data"][dsy * downsampled_map["width"] + dsx]
-
 
 # Calculates color for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
@@ -607,7 +655,7 @@ def flood_fill(map, area, color):
         for x in range(area["x1"], area["x2"] + 1):
             map["data"][y * map["width"] + x] = color
 
-def create_map(width, height, fill=-1):
+def create_map(width, height, fill = -1):
     data_size = width * height
     data = [fill] * data_size
     return {"data": data, "width": width, "height": height}
@@ -641,7 +689,7 @@ def downsample(map, final_width):
     # print("Downsampling", map["width"], map["height"], "to:", final_width)
     if len(map["data"]) != map["width"] * map["height"]:
         fail("Map size is:", len(map["data"]))
-    
+
     src_height = len(map["data"]) // map["width"]  # Ensure integer division
     oversample = int(map["width"] / final_width)  # Correct oversample calculation
     final_height = int(src_height / oversample)
@@ -671,7 +719,6 @@ def downsample(map, final_width):
         osy += oversample
 
     return new_map  # Returns map
-
 
 # Converts an rgb map to a Tidbyt Column made up of Rows made up of Boxes
 def render_tidbyt(map):
@@ -725,8 +772,13 @@ def rnd():
 
 def get_schema():
     # link = cache.get("last_url")
-    if link == None:
-        link = "N/A"
+    # if link == None:
+    #     link = "N/A"
+
+    gradient_options = [ schema.Option(value="Random", display="Randomized every time") ]
+    for g in PREDEFINED_GRADIENTS.keys():
+        gradient_options.append(schema.Option(value=g, display=" ".join([word.capitalize() for word in g.split("-")])))
+
     return schema.Schema(
         version = "1",
         fields = [
@@ -750,12 +802,7 @@ def get_schema():
                 desc = "Color palette/gradient",
                 default = "random",
                 icon = "palette",
-                options = [
-                    schema.Option(value = "random", display = "Random"),
-                    schema.Option(value = "red", display = "Red-ish"),
-                    schema.Option(value = "blue", display = "Blue-ish"),
-                    schema.Option(value = "green", display = "Green-ish"),
-                ],
+                options = gradient_options,
             ),
             schema.Dropdown(
                 id = "poi",
