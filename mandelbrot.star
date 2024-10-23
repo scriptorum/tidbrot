@@ -21,18 +21,11 @@ ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accura
 ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
-NUM_GRADIENT_STEPS = 64  # Higher = more color variation
-GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
 CTRX, CTRY = -0.75, 0  # Mandelbrot center
-MINX, MINY, MAXX, MAXY = \
-    -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
+MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
-BLACK_PIXEL = render.Box(
-    width = 1,
-    height = 1,
-    color = BLACK_COLOR,
-)  # Pregenerated 1x1 pixel black box
+BLACK_PIXEL = render.Box( width = 1, height = 1, color = BLACK_COLOR, )  # Pregenerated 1x1 pixel black box
 POI_GRID_X = 8  # When exploring POIs, divides area into XY grid
 POI_GRID_Y = 4  # and checks random pixel in grid cell
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
@@ -42,6 +35,7 @@ GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
 MAX_RECURSION = 1  # Max recursion for adaptive AA
 ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
 BASE_ADAPTIVE_AA = 2  # Minimum oversampling Adaptive AA starts with
+
 POI_MAX_TIME = 3  # Go with best POI if max time elapsed
 SUBSAMPLE_MAX_TIME = 26  # Force stop Adaptive AA if max time elapsed
 NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
@@ -49,6 +43,8 @@ CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
 GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
 START_TIME = time.now().unix  # Timestamp at start of app
 
+GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
+RANDOM_GRADIENT_STEPS = 64  # Higher = more color variation
 PREDEFINED_GRADIENTS_NUM_CYCLES = 4
 PREDEFINED_GRADIENTS = {
     "sunburst":   ((255, 0, 0), (255, 255, 0)),
@@ -67,16 +63,12 @@ PREDEFINED_GRADIENTS = {
     "midnight": ((0, 0, 128), (0, 0, 255), (75, 0, 130)) 
 }
 
-
 def main(config):
     seed = int(config.str("seed", time.now().unix))
     random.seed(seed)
     print("Using random seed:", seed)
     app = {"config": config}
 
-    # RANGE      -->  1 = 1x1 pixel no blending, 2 = 2x2 pixel blend
-    # MULTIPLIER -->  1 = no or mini AA, 2 = 2AA (2x2=4X samples)
-    # OFFSET     -->  0 = 1:1, 1 = oversample by 1 pixel (use with RANGE 2, MULT 1 for mini AA)
     oversampling = config.str("oversampling", "adaptive")
     app["adaptive_aa"] = False
     if oversampling == "none":
@@ -110,7 +102,6 @@ def main(config):
     # Determine what POI to zoom onto
     app["target"] = 0, 0
     choose_poi(app)  # Choose a point of interest
-
     print("Zoom Level:", app["zoom_level"])
 
     # Generate the animation with all frames
@@ -446,7 +437,7 @@ def generate_gradient(pal_type):
 
     # Random gradient
     if pal_type == "random":
-        for _ in range(0, NUM_GRADIENT_STEPS):
+        for _ in range(0, RANDOM_GRADIENT_STEPS):
             gradient.append(tuple(color))
             color = alter_color_rgb(color)
         return gradient
@@ -529,6 +520,7 @@ def alt(obj, field, value):
     c[field] = value
     return c
 
+# Generates a subsection of the fractal in map
 def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, depth = 0):
     # print("GenerateMandelbrotArea map:", map["width"], map["height"], "pix:", orig_pix, "set:", orig_set, "limit:", iter_limit, "depth:", depth)
 
@@ -622,7 +614,8 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
         generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
         downsampled_map = downsample(sub_map, area_width)
 
-        # copy to sub_map to correct area of full map
+        # Copy to sub_map to correct area of full map
+        # To do modify downsample to support writing to supplied map at specific offset, then we can avoid this step
         for dsy in range(downsampled_map["height"]):
             for dsx in range(downsampled_map["width"]):
                 x = pix["x1"] + dsx
@@ -804,80 +797,14 @@ def get_schema():
                 icon = "palette",
                 options = gradient_options,
             ),
-            schema.Dropdown(
-                id = "poi",
-                name = "POI",
-                desc = "Point of interest (where to focus)",
-                icon = "arrows-to-eye",
-                default = "search",
-                options = [
-                    schema.Option(value = "search", display = "Search for new POI"),
-                    schema.Option(value = "specific", display = "Entered coordinates"),
-                    schema.Option(value = "popular", display = "Random popular POI"),
-                ],
-            ),
-            schema.Generated(
-                id = "poi_options",
-                source = "poi",
-                handler = poi_options,
-            ),
         ],
     )
 
-def poi_options(type):
-    if type == "specific":
-        return [
-            schema.Text(
-                id = "poi_coord_real",
-                name = "Real",
-                desc = "Real POI coordinate",
-                icon = "hashtag",
-                default = "-1.5",
-            ),
-            schema.Text(
-                id = "poi_coord_imaginary",
-                name = "Imaginary",
-                desc = "Imaginary POI coordinate",
-                icon = "hashtag",
-                default = "0.0",
-            ),
-            schema.Text(
-                id = "zoom_level",
-                name = "Zoom Level",
-                desc = "Initial zoom level",
-                icon = "hashtag",
-                default = "1.0",
-            ),
-        ]
-    elif type == "search":
-        return [
-            schema.Text(
-                id = "poi_points",
-                name = "POI Points",
-                desc = "Number of random points to search",
-                icon = "hashtag",
-                default = "10000",
-            ),
-            schema.Text(
-                id = "zoom_level_min",
-                name = "Zoom Min",
-                desc = "Initial magnification (at minimum)",
-                icon = "hashtag",
-                default = "10.0",
-            ),
-            schema.Text(
-                id = "zoom_level_mult",
-                name = "Zoom Random",
-                desc = "Additional magnification (random amount)",
-                icon = "hashtag",
-                default = "1000.0",
-            ),
-        ]
-
-    # Popular have no custom options
-    return []
-
+# Instead of calling fail(), in some situations, we can display the error
+# message right on the Tidbyt
 def err(msg, include_root = True):
+    print(msg)
+
     text = render.WrappedText(
         content = msg,
         width = 64,
