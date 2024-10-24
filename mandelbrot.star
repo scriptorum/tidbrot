@@ -30,14 +30,20 @@ POI_GRID_Y = 4  # and checks random pixel in grid cell
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
 POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
+
 MAX_ADAPTIVE_PASSES = 32  # Max recursion for adaptive AA
+ADAPTIVE_AA_START_RADIUS = 0.5
+ADAPTIVE_AA_INC_RADIUS = 0.01
+ADAPTIVE_AA_INC_ANGLE = 137.5
+ADAPTIVE_AA_START_ANGLE = random.number(0, 360)
 
 DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down darks to no lower than BRIGHTNESS_MIN
 DEFAULT_CONTRAST = True  # Adjusts for maximal contrast
 DEFAULT_JULIA = False  # True to display (whole) julia set [faster]; false to display (zoomed in) mandelbrot
 DEFAULT_GAMMA = "1.0"  # Gamma correction, 1.0 = off; I did not find this to help much
-DEFAULT_OVERSAMPLE = "2"  # Oversample style (adaptive, oversample multiplier 1 or more)
+DEFAULT_OVERSAMPLE = "2"  # Oversample style (1 or more)
 DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFINED_GRADIENT)
+DEFAULT_ADAPTIVE_AA = True # Additional AA passes as time allows
 
 POI_MAX_TIME = 3  # Go with best POI if max time elapse
 ADAPTIVE_AA_MAX_TIME = 20  # Force stop Adaptive AA if max time elapsed
@@ -79,17 +85,12 @@ def main(config):
     print("Using random seed:", seed)
     app = {"config": config}
 
+    app["adaptive"] = config.bool("adaptive", DEFAULT_ADAPTIVE_AA)    
     oversample_str = config.str("oversample", DEFAULT_OVERSAMPLE)
-    app["adaptive_aa"] = False
-    app["oversample"] = 1
-    if oversample_str == "adaptive":
-        app["adaptive_aa"] = True
-    elif is_int(oversample_str):
-        app["oversample"] = int(oversample_str)
-    else:
+    if not is_int(oversample_str):
         return err("Unknown oversample value: %s" % oversample_str)
-    print("Oversample:", str(app["oversample"]) + "X", "Adaptive:", app["adaptive_aa"])
-
+    app["oversample"] = int(oversample_str)
+    print("Oversample:", oversample_str + "X", " ... AdaptiveAA:", ["disabled", "enabled"][int(app["adaptive"])])
     # Calculate internal map dimensions
     app["map_width"] = DISPLAY_WIDTH * app["oversample"]  # Pixels samples per row
     app["map_height"] = DISPLAY_HEIGHT * app["oversample"]  # Pixel samples per column
@@ -660,8 +661,8 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
     
     # Generate more AA details for targeted areas
     print("Beginning adaptive AA on", len(detail_points), "points")
-    radius = 0.1
-    angle = 0.0
+    radius = ADAPTIVE_AA_START_RADIUS
+    angle = ADAPTIVE_AA_START_ANGLE
     for n in range(MAX_ADAPTIVE_PASSES):
         elapsed = time.now().unix - START_TIME
         if elapsed > ADAPTIVE_AA_MAX_TIME:
@@ -678,8 +679,8 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly)
 
         # Move offset around in a spiral
-        radius += 0.005
-        angle = math.mod(angle + 137.5, 360)
+        radius += ADAPTIVE_AA_INC_RADIUS
+        angle = math.mod(angle + ADAPTIVE_AA_INC_ANGLE, 360)
 
 # Generates additional details for a set of specific regions using spiral AA
 def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly):
@@ -742,7 +743,7 @@ def render_fractal(app, x, y):
     # Generate the map
     pix = {"x1": 0, "y1": 0, "x2": app["max_pixel_x"], "y2": app["max_pixel_y"]}
     set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
-    generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive_aa"], *app["c"])
+    generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive"], *app["c"])
 
     # Render an iteration map to an RGB map of the display size
     map = downsample(app["map"], DISPLAY_WIDTH)
@@ -860,7 +861,7 @@ def get_schema():
             schema.Dropdown(
                 id = "oversample",
                 name = "Oversample",
-                desc = "Oversample Method",
+                desc = "Base oversampling",
                 default = DEFAULT_OVERSAMPLE,
                 options = [
                     schema.Option(value = "1", display = "None"),
@@ -869,10 +870,16 @@ def get_schema():
                     schema.Option(value = "8", display = "8X AA (mandelbrots might time out)"),
                     schema.Option(value = "16", display = "16X AA (mandelbrots will time out)"),
                     schema.Option(value = "32", display = "32X AA (julia might time out too)"),
-                    schema.Option(value = "adaptive", display = "Adaptive AA (recommended)"),
                 ],
                 icon = "border-none",
             ),
+            schema.Toggle(
+                id = "adaptive",
+                name = "Adaptive AA",
+                desc = "Additional AA passes as time allows (Recommended)",
+                default = DEFAULT_ADAPTIVE_AA,
+                icon = "arrow-up-right-dots",
+            ),            
             schema.Dropdown(
                 id = "gradient",
                 name = "Gradient",
