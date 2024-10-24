@@ -30,9 +30,7 @@ POI_GRID_Y = 4  # and checks random pixel in grid cell
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
 POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
-MAX_RECURSION = 3  # Max recursion for adaptive AA
-ADAPTIVE_AA_SAMPLES = 3  # Amount of oversample per each adaptive AA
-BASE_ADAPTIVE_AA = 2  # Minimum oversample Adaptive AA starts with
+MAX_ADAPTIVE_PASSES = 32  # Max recursion for adaptive AA
 
 DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down darks to no lower than BRIGHTNESS_MIN
 DEFAULT_CONTRAST = True  # Adjusts for maximal contrast
@@ -42,7 +40,7 @@ DEFAULT_OVERSAMPLE = "2"  # Oversample style (adaptive, oversample multiplier 1 
 DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFINED_GRADIENT)
 
 POI_MAX_TIME = 3  # Go with best POI if max time elapse
-SUBSAMPLE_MAX_TIME = 25  # Force stop Adaptive AA if max time elapsed
+ADAPTIVE_AA_MAX_TIME = 20  # Force stop Adaptive AA if max time elapsed
 NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
 CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
 GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
@@ -85,7 +83,6 @@ def main(config):
     app["adaptive_aa"] = False
     app["oversample"] = 1
     if oversample_str == "adaptive":
-        app["oversample"] = BASE_ADAPTIVE_AA
         app["adaptive_aa"] = True
     elif is_int(oversample_str):
         app["oversample"] = int(oversample_str)
@@ -466,24 +463,18 @@ def get_gradient_rgb(gradient, max_iter, iter):
 
     return (r, g, b)
 
+
 # Blends RGB colors together
 # Also converts from quantized values to full color spectrum
 def blend_colors(*colors):
     tr, tg, tb = 0, 0, 0
     count = 0
-    for i in range(0, len(colors) - 1):
+    for i in range(0, len(colors)):
         r, g, b = hex_to_rgb(colors[i])
         tr += r
         tg += g
         tb += b
         count += 1
-
-    if count == 0:
-        return rgb_to_hex(colors[0][0], colors[0][1], colors[0][2])
-    elif count == 2:  # Lame optimization
-        return rgb_to_hex(int(tr << 2), int(tg << 2), int(tb << 2))
-    elif count == 4:  # Lame optimization
-        return rgb_to_hex(int(tr << 4), int(tg << 4), int(tb << 4))
 
     return rgb_to_hex(int(tr / count), int(tg / count), int(tb / count))
 
@@ -583,6 +574,7 @@ def alt(obj, field, value):
 def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, cr, ci, depth = 0):
     # Initialize the stack with the first region to process
     stack = [(orig_pix, orig_set)]
+    detail_points = []
 
     # We will dynamically increase the stack in the loop
     for _ in range(MAX_INT):  # Why no while loop, damn you starlark
@@ -650,45 +642,70 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             stack.append((alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)))
             continue
 
-        # Quit early to avoid timeout error
+        # Generate all pixels for this area
+        for offy in range(dyp + 1):
+            for offx in range(dxp + 1):
+                # Draw pixel
+                xp = pix["x1"] + offx
+                yp =  pix["y1"] + offy
+                xm = set["x1"] + (dxm * offx)
+                ym = set["y1"] + (dym * offy)
+                generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci)
+
+                # This will track points that could benefit from more detailing
+                detail_points.append({ "xp":xp, "yp":yp, "xm":xm, "ym":ym })
+
+    if not adaptive_aa:
+        return
+    
+    # Generate more AA details for targeted areas
+    print("Beginning adaptive AA on", len(detail_points), "points")
+    radius = 0.1
+    angle = 0.0
+    for n in range(MAX_ADAPTIVE_PASSES):
         elapsed = time.now().unix - START_TIME
-        if adaptive_aa and elapsed > SUBSAMPLE_MAX_TIME:
-            adaptive_aa = False
-            print("Adaptive AA timeout! Elapsed:", elapsed)
+        if elapsed > ADAPTIVE_AA_MAX_TIME:
+            print("Adaptive AA stopping with elapsed time:", elapsed)
+            break
 
-        # This is a small area with differing iterations, calculate/mark them individually
-        if not adaptive_aa or depth >= MAX_RECURSION:
-            # Generate all pixels for this area
-            for offy in range(dyp + 1):
-                for offx in range(dxp + 1):
-                    generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient, cr, ci)
-            continue
+        # Determine oversample offset
+        spiralx = radius * math.cos(math.radians(angle)) * dxm
+        spiraly = radius * math.sin(math.radians(angle)) * dym
 
-        # Oversample this area
-        area_width, area_height = dxp + 1, dyp + 1
-        sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
-        sub_pix = {"x1": 0, "y1": 0, "x2": sub_map["width"] - 1, "y2": sub_map["height"] - 1}
-        generate_fractal_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, cr, ci, depth + 1)
-        downsampled_map = downsample(sub_map, area_width)
+        # Perform additional sample pass
+        print("Adding more details! PASS", "#" + str(n+1), " Elapsed:", elapsed, " Offset:", spiralx, spiraly, "Radius:", radius, "Angle:", angle)
+        for point in detail_points:
+            generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly)
 
-        # Copy to sub_map to correct area of full map
-        # To do modify downsample to support writing to supplied map at specific offset, then we can avoid this step
-        for dsy in range(downsampled_map["height"]):
-            for dsx in range(downsampled_map["width"]):
-                x = pix["x1"] + dsx
-                y = pix["y1"] + dsy
-                map["data"][y * map["width"] + x] = downsampled_map["data"][dsy * downsampled_map["width"] + dsx]
+        # Move offset around in a spiral
+        radius += 0.005
+        angle = math.mod(angle + 137.5, 360)
+
+# Generates additional details for a set of specific regions using spiral AA
+def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly):
+    index = point["yp"] * map["width"] + point["xp"]
+    iter, _ = fractal_calc(point["xm"] + spiralx, point["ym"] + spiraly, iter_limit, cr, ci)
+    if iter == iter_limit:
+        iter = max_iter
+    orig_color = map["data"][index]
+    color = iter_to_color(gradient, max_iter, iter)
+    if orig_color == color:
+        return
+
+    blend = blend_colors(orig_color, orig_color, color)
+    map["data"][index] = blend
+    # print("Blended",orig_color,"+",color,"=",blend)
 
 # Calculates color for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
-def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci):
+def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
     # print("Generating pixel at:", xp, yp, "Map:", map["width"], map["height"])
     stored_val = map["data"][yp * map["width"] + xp]
     if stored_val != -1:
         return stored_val
 
     # Normal fractal calculation
-    iter, _ = fractal_calc(xm, ym, iter_limit, cr, ci)
+    iter, _ = fractal_calc(xs, ys, iter_limit, cr, ci)
 
     # print("Fractal calc! @", xm, ym, "Iter:", iter, "Iter_limit:", iter_limit, "c:", cr, ci)
     if iter == iter_limit:
