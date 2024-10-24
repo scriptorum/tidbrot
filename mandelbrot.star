@@ -16,9 +16,10 @@ load("schema.star", "schema")
 load("time.star", "time")
 # load("cache.star", "cache")
 
-MIN_ITER = 100  # minimum iterations, raise if initial zoom is > 1
+MIN_ITER = 150  # Minimum iterations
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
-ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, less accuracy
+JULIA_ZOOM = 1.0 # 0.5 = low detail, but wide view; 2 = high detail, right up in da face
+ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, but worse accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
 CTRX, CTRY = -0.75, 0  # Mandelbrot center
@@ -37,7 +38,7 @@ ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
 BASE_ADAPTIVE_AA = 2  # Minimum oversampling Adaptive AA starts with
 
 POI_MAX_TIME = 3  # Go with best POI if max time elapsed
-SUBSAMPLE_MAX_TIME = 26  # Force stop Adaptive AA if max time elapsed
+SUBSAMPLE_MAX_TIME = 25  # Force stop Adaptive AA if max time elapsed
 NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
 CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
 GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
@@ -71,17 +72,11 @@ def main(config):
 
     oversampling = config.str("oversampling", "adaptive")
     app["adaptive_aa"] = False
-    if oversampling == "none":
-        app["oversample"] = 1
-    elif oversampling == "2x":
-        app["oversample"] = 2
-    elif oversampling == "4x":
-        app["oversample"] = 4
-    elif oversampling == "8x":
-        app["oversample"] = 8
-    elif oversampling == "adaptive":
+    if oversampling == "adaptive":
         app["oversample"] = BASE_ADAPTIVE_AA
         app["adaptive_aa"] = True
+    elif oversampling.isdigit():
+        app["oversample"] = int(oversampling)
     else:
         return err("Unknown oversampling value: %s" % oversampling)
     print("Oversampling:", app["oversample"], "Adaptive:", app["adaptive_aa"])
@@ -100,9 +95,19 @@ def main(config):
     app["gradient"] = generate_gradient(app["palette"])
 
     # Determine what POI to zoom onto
-    app["target"] = 0, 0
+    app["c"] = None, None
     choose_poi(app)  # Choose a point of interest
-    print("Zoom Level:", app["zoom_level"])
+    app["poi_zoom_level"] = app["zoom_level"]
+
+    # Slight changes for julia set
+    if config.bool("julia", False): # Is this a julia or mandelbrot fractal
+        app["c"] = app["target"]
+        app["target"] = 0.0, 0.0
+        app["zoom_level"] = JULIA_ZOOM
+        app["max_iter"] = zoom_to_iter(JULIA_ZOOM)
+        print("Julia set enabled")
+    else: # Mandelbrot
+        print("Zoom Level:", app["zoom_level"])
 
     # Generate the animation with all frames
     frames = get_frames(app)
@@ -198,35 +203,43 @@ def contrast_correction(map, min_scale = 0, max_scale = 255):
     return map
 
 def get_frames(app):
-    print("Generating frame")
+    print("Generating frame with max_iter:", app["max_iter"])
 
     # This was a loop for an animation, but the animation takes too long
     # to render on Tidbyt servers with any degree of quality
     frames = list()  # List to store frames of the animation
-    map = render_mandelbrot(app, app["target"][0], app["target"][1])
-    if time.now().unix - START_TIME < NORMALIZE_MAX_TIME:
-        normalize_brightness(map)
-
-        if time.now().unix - START_TIME < CONTRAST_MAX_TIME:
-            contrast_correction(map)
-
-            if GAMMA_CORRECTION > 1.0:
-                if time.now().unix - START_TIME < GAMMA_MAX_TIME:
-                    gamma_correction(map)
-                else:
-                    print("Skipping gamma correction, no time left")
-        else:
-            print("Skipping contrast correction, no time left")
-    else:
-        print("Skipping normalization, no time left")
+    map = render_fractal(app, app["target"][0], app["target"][1])
+    map = apply_after_effects(app, map)
     tidbytMap = render_tidbyt(map)
     frames.append(tidbytMap)
-
-    print(get_link(app["target"][0], app["target"][1], app["max_iter"], app["zoom_level"]))
     return frames
 
+def apply_after_effects(app, map):
+    if time.now().unix - START_TIME > NORMALIZE_MAX_TIME:
+        return map   
+    normalize_brightness(map)
+    if time.now().unix - START_TIME > CONTRAST_MAX_TIME:
+        return map
+    contrast_correction(map)
+    if GAMMA_CORRECTION <= 1.0 or time.now().unix - START_TIME > GAMMA_MAX_TIME:
+        return map
+    gamma_correction(map)
+    return map
+
+def get_link(app):
+    x = app["target"][0]
+    y = app["target"][1]
+    iter = app["max_iter"]
+    zoom = app["poi_zoom_level"]
+
+    # Julia set fix
+    if app['c'] != (0.0, 0.0):
+        x, y = app["c"][0], app["c"][1]
+
+    return get_link_from(x, y, iter, zoom)
+
 # Makes for easier debugging to compare results to an existing renderer
-def get_link(x, y, iter, zoom):
+def get_link_from(x, y, iter, zoom):
     return "https://mandel.gart.nz/?Re={}&Im={}&iters={}&zoom={}&colourmap=5&maprotation=0&axes=0&smooth=0".format(
         x,
         y,
@@ -243,6 +256,9 @@ def float_range(start, end, num_steps, inclusive = False):
         result.append(end)
     return result
 
+def zoom_to_iter(zoom):
+    return int(MIN_ITER + max(0, zoom * ZOOM_TO_ITER))
+
 def choose_poi(app):
     # Find a respectable point of interest
     print("Determining point of interest")
@@ -252,9 +268,7 @@ def choose_poi(app):
     print("Settled on POI:", x, y, "score:", best)
     app["target"] = x, y
     app["zoom_level"] = zoom
-    app["max_iter"] = int(MIN_ITER + zoom * ZOOM_TO_ITER)
-
-    print(get_link(x, y, app["max_iter"], zoom))
+    app["max_iter"] = zoom_to_iter(zoom)
 
     # cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
 
@@ -272,7 +286,7 @@ def find_poi():
             break
 
         minx, miny, maxx, maxy, zoom = search_areas.pop()
-        iter_limit = int(MIN_ITER + zoom * ZOOM_TO_ITER)
+        iter_limit = zoom_to_iter(zoom)
 
         # Grid up area
         cell_width = (maxx - minx) / POI_GRID_X
@@ -291,7 +305,7 @@ def find_poi():
                     break
                 sampx = (rnd() - 0.5 + x) * cell_width + minx
                 sampy = (rnd() - 0.5 + y) * cell_height + miny
-                iter, _ = mandelbrot_calc(sampx, sampy, iter_limit)
+                iter, _ = fractal_calc(sampx, sampy, iter_limit)
                 if iter >= iter_limit:  # Did not escape
                     continue
                 if zoom > POI_MAX_ZOOM:  # At max zoom level
@@ -314,7 +328,7 @@ def find_poi():
         if score > best_score:
             bestx, besty, best_score, best_zoom = (minx + maxx) / 2, (maxy + miny) / 2, score, zoom
             print("Found better POI:", bestx, besty, "score:", best_score, "zoom:", best_zoom)
-            print(get_link(bestx, besty, iter_limit, best_zoom))
+            print(get_link_from(bestx, besty, iter_limit, best_zoom))
 
     # In theory this should stop shortly after hitting POI_MAX_TIME
     # But sometimes the Tidbyt servers throttle their apps
@@ -327,27 +341,34 @@ def find_poi():
 # Performs the mandelbrot calculation on a single point
 # Returns both the escape distance and the number of iterations
 # (cannot exceed iter_limit)
-def mandelbrot_calc(x, y, iter_limit):
-    # Initialize z (zr, zi) and c (cr, ci)
-    x2, y2, w = 0.0, 0.0, 0.0
+def fractal_calc(x, y, iter_limit, cr = None, ci = None):
+    # Set the constant c
+    if cr == None:
+        # For Mandelbrot, c is the pixel's coordinates, and z starts at 0
+        cr, ci = x, y
+        zr, zi = 0.0, 0.0
+    else:
+        # For Julia, use c as supplied and z is the pixel's coordinates
+        zr, zi = x, y
 
-    # Use a for loop to simulate the behavior of a while loop
+    # Precompute squares
+    zrsqr, zisqr = zr * zr, zi * zi
+
+    # Iteration loop
     for iteration in range(1, iter_limit + 1):
-        # Check if the point has escaped
-        if x2 + y2 > ESCAPE_THRESHOLD:
-            return (iteration, x2 + y2)
+        # Escape condition check: |z|^2 = x2 + y2 > ESCAPE_THRESHOLD
+        if zrsqr + zisqr > ESCAPE_THRESHOLD:
+            return (iteration, zrsqr + zisqr)
 
-        # Calculate new zr and zi (x and y in pseudocode)
-        zr = x2 - y2 + x
-        zi = w - x2 - y2 + y
+        # Update z: zr_new = zr^2 - zi^2 + cr, zi_new = 2 * zr * zi + ci
+        zr, zi = zrsqr - zisqr + cr, 2 * zr * zi + ci
 
-        # Update squares and w for the next iteration
-        x2 = zr * zr
-        y2 = zi * zi
-        w = (zr + zi) * (zr + zi)
+        # Update squared terms for the next iteration
+        zrsqr, zisqr = zr * zr, zi * zi
 
-    # End timing and return the max iteration and the final distance if escape condition is not met
-    return (iter_limit, x2 + y2)
+    # Return max iteration if escape condition is not met
+    return (iter_limit, zrsqr + zisqr)
+
 
 def int_to_hex(n):
     if n > 255:
@@ -465,7 +486,7 @@ def alter_color_rgb(color):
 # Returns the color used if they are all the same, otherwise False
 # If match_color is passed something other than False, then it will
 # compare all colors against this value
-def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient):
+def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient, cr, ci):
     xm_step, ym_step = 0, 0
 
     # Determine whether the line is vertical or horizontal
@@ -499,7 +520,7 @@ def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient
             xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
-        color = generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient)
+        color = generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci)
 
         # Initialize match_iter on first iteration
         if match_color == -1:
@@ -521,7 +542,7 @@ def alt(obj, field, value):
     return c
 
 # Generates a subsection of the fractal in map
-def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, depth = 0):
+def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, cr, ci, depth = 0):
     # print("GenerateMandelbrotArea map:", map["width"], map["height"], "pix:", orig_pix, "set:", orig_set, "limit:", iter_limit, "depth:", depth)
 
     # Initialize the stack with the first region to process
@@ -539,27 +560,27 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
 
         # Determine some deltas
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
-        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
+        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)        
 
         # OPTIMIZATION: A small box can be filled in with the same color if the corners are identical
         if dxp <= 6 and dyp <= 6:
-            color1 = generate_pixel(map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit, gradient)
-            color2 = generate_pixel(map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit, gradient)
-            color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient)
-            color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient)
+            color1 = generate_pixel(map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit, gradient, cr, ci)
+            color2 = generate_pixel(map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit, gradient, cr, ci)
+            color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient, cr, ci)
+            color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient, cr, ci)
             if color1 == color2 and color2 == color3 and color3 == color4:
                 # print("Flood filling small area of same corners")
                 flood_fill(map, pix, color1)
                 continue
 
         # OPTIMIZATION: A border with the same iterations can be filled with the same color
-        color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient)
+        color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit, gradient)
+            color = generate_line_opt(map, max_iter, color, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit, gradient)
+            color = generate_line_opt(map, max_iter, color, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient)
+            color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient, cr, ci)
         if color != False:
             # print("Flood filling area of same border!")
             flood_fill(map, pix, color)
@@ -604,14 +625,14 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
             # Generate all pixels for this area
             for offy in range(dyp + 1):
                 for offx in range(dxp + 1):
-                    generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient)
+                    generate_pixel(map, max_iter, pix["x1"] + offx, pix["y1"] + offy, set["x1"] + (dxm * offx), set["y1"] + (dym * offy), iter_limit, gradient, cr, ci)
             continue
 
         # Oversample this area
         area_width, area_height = dxp + 1, dyp + 1
         sub_map = create_map(area_width * ADAPTIVE_AA_SAMPLES, area_height * ADAPTIVE_AA_SAMPLES)
         sub_pix = {"x1": 0, "y1": 0, "x2": sub_map["width"] - 1, "y2": sub_map["height"] - 1}
-        generate_mandelbrot_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, depth + 1)
+        generate_fractal_area(sub_map, max_iter, sub_pix, set, iter_limit, gradient, adaptive_aa, cr, ci, depth + 1)
         downsampled_map = downsample(sub_map, area_width)
 
         # Copy to sub_map to correct area of full map
@@ -624,16 +645,16 @@ def generate_mandelbrot_area(map, max_iter, orig_pix, orig_set, iter_limit, grad
 
 # Calculates color for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
-def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient):
+def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci):
     # print("Generating pixel at:", xp, yp, "Map:", map["width"], map["height"])
     stored_val = map["data"][yp * map["width"] + xp]
     if stored_val != -1:
         return stored_val
 
     # Normal mandelbrot calculation
-    iter, _ = mandelbrot_calc(xm, ym, iter_limit)
+    iter, _ = fractal_calc(xm, ym, iter_limit, cr, ci)
 
-    # print("m:", xm, ym, "p:", xp, yp, "iter:", iter)
+    # print("Fractal calc! @", xm, ym, "Iter:", iter, "Iter_limit:", iter_limit, "c:", cr, ci)
     if iter == iter_limit:
         iter = max_iter
 
@@ -653,7 +674,7 @@ def create_map(width, height, fill = -1):
     data = [fill] * data_size
     return {"data": data, "width": width, "height": height}
 
-def render_mandelbrot(app, x, y):
+def render_fractal(app, x, y):
     # Determine coordinates
     half_width = (MAXX - MINX) / app["zoom_level"] / 2.0
     half_height = (MAXY - MINY) / app["zoom_level"] / 2.0
@@ -668,7 +689,7 @@ def render_mandelbrot(app, x, y):
     # Generate the map
     pix = {"x1": 0, "y1": 0, "x2": app["max_pixel_x"], "y2": app["max_pixel_y"]}
     set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
-    generate_mandelbrot_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive_aa"])
+    generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive_aa"], *app["c"])
 
     # Render an iteration map to an RGB map of the display size
     map = downsample(app["map"], DISPLAY_WIDTH)
@@ -782,10 +803,12 @@ def get_schema():
                 icon = "border-none",
                 default = "adaptive",
                 options = [
-                    schema.Option(value = "none", display = "None"),
-                    schema.Option(value = "2x", display = "2X AA (slower)"),
-                    schema.Option(value = "4x", display = "4X AA (much slower)"),
-                    schema.Option(value = "8x", display = "8X AA (imagine even slower)"),
+                    schema.Option(value = "1", display = "None"),
+                    schema.Option(value = "2", display = "2X AA (slower)"),
+                    schema.Option(value = "4", display = "4X AA (imagine even slower)"),
+                    schema.Option(value = "8", display = "8X AA (mandelbrots might time out)"),
+                    schema.Option(value = "16", display = "16X AA (mandelbrots will time out)"),
+                    schema.Option(value = "32", display = "32X AA (julia might time out too)"),
                     schema.Option(value = "adaptive", display = "Adaptive AA (recommended)"),
                 ],
             ),
@@ -796,6 +819,13 @@ def get_schema():
                 default = "random",
                 icon = "palette",
                 options = gradient_options,
+            ),
+            schema.Toggle(
+                id="julia",
+                name="Julia",
+                desc="Display a julia set (faster)",
+                default=False,
+                icon = "puzzle-piece",
             ),
         ],
     )
