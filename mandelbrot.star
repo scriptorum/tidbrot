@@ -23,7 +23,7 @@ DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
 CTRX, CTRY = -0.75, 0  # Mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 BLACK_COLOR = "#000000"  # Shorthand for black color
-MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
+MAX_INT = int(math.pow(2,63)) - 2 # Largest value for Starlark: MAX_INT+2 larger breaks range(), MAX_INT+1 breaks math.random
 BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
 POI_GRID_X = 8  # When exploring POIs, divides area into XY grid
 POI_GRID_Y = 4  # and checks random pixel in grid cell
