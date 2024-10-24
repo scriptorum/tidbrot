@@ -6,8 +6,6 @@
 # - Adaptive AA:
 #   + Need to perform progressive AA, adaptive AA is selective but not progressive enough,
 #     so if it is interrupted, it can look jarring
-# - Time out prediction:
-#   + Use to adjust zoom / iteration limit / POI search points
 #
 load("math.star", "math")
 load("random.star", "random")
@@ -33,7 +31,7 @@ POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
 POI_MAX_ZOOM = 10000  # Don't magnify like a crazy person
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
 GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
-MAX_RECURSION = 1  # Max recursion for adaptive AA
+MAX_RECURSION = 3  # Max recursion for adaptive AA
 ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
 BASE_ADAPTIVE_AA = 2  # Minimum oversampling Adaptive AA starts with
 
@@ -48,20 +46,24 @@ GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in,
 RANDOM_GRADIENT_STEPS = 64  # Higher = more color variation
 PREDEFINED_GRADIENTS_NUM_CYCLES = 4
 PREDEFINED_GRADIENTS = {
-    "sunburst":   ((255, 0, 0), (255, 255, 0)),
     "neon-rose":  ((255, 0, 0), (255, 0, 255)),
     "spring-lime": ((0, 255, 0), (255, 255, 0)),
     "seafoam":   ((0, 255, 0), (0, 255, 255)),
     "ocean-wave": ((0, 0, 255), (0, 255, 255)),
     "electric-violet": ((0, 0, 255), (255, 0, 255)),
-    "sunset-glow": ((0, 0, 255), (128, 0, 128), (255, 0, 0)),
-    "holly-jolly": ((0, 255, 0), (255, 255, 0)),
     "autumn-glow": ((0, 255, 0), (255, 255, 0), (255, 165, 0)),
-    "flame": ((255, 0, 0), (255, 165, 0), (255, 255, 0)),
     "twilight": ((0, 255, 255), (0, 0, 255), (128, 0, 128)),
     "spectrum": ((255, 0, 0), (255, 127, 0), (255, 255, 0), (0, 255, 0), (0, 0, 255), (75, 0, 130), (148, 0, 211)),
     "lavender-fields": ((255, 182, 193), (230, 230, 250)),
-    "midnight": ((0, 0, 128), (0, 0, 255), (75, 0, 130)) 
+    "midnight": ((0, 0, 128), (0, 0, 255), (75, 0, 130)),
+    "arctic-sky": ((135, 206, 250), (0, 191, 255), (70, 130, 180)),
+    "desert-sands": ((244, 164, 96), (210, 180, 140), (255, 228, 196)),
+    "forest-dusk": ((34, 139, 34), (85, 107, 47), (139, 69, 19)),
+    "solar-flare": ((255, 69, 0), (255, 140, 0), (255, 215, 0)),
+    "iceberg": ((173, 216, 230), (224, 255, 255), (240, 248, 255)),
+    "berry-blend": ((128, 0, 128), (153, 50, 204), (186, 85, 211)),
+    "volcanic": ((105, 105, 105), (255, 69, 0), (139, 0, 0)),
+    "gray": ((32, 32, 32), (256, 256, 256)),
 }
 
 def main(config):
