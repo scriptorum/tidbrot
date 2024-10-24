@@ -106,14 +106,6 @@ def main(config):
     app["gradient"] = generate_gradient(gradient_str)
     print("Gradient selected:", gradient_str)
 
-    # Gamma correction
-    gamma_str = config.str("gamma", DEFAULT_GAMMA)
-    if is_float(gamma_str) and float(gamma_str) >= 1.0:
-        app["gamma"] = float(gamma_str)
-        print("Gamma correction", ["disabled", "enabled"][int(app["gamma"] < 1.0)])
-    else:
-        return err("Gamma must be a floating point number >= 1.0")
-
     # Normalize brightness
     app["brightness"] = config.bool("brightness", True)
     print("Brightness normalization", ["disabled", "enabled"][int(app["brightness"])])
@@ -121,6 +113,14 @@ def main(config):
     # Contrast correction
     app["contrast"] = config.bool("contrast", True)
     print("Contrast correction", ["disabled", "enabled"][int(app["contrast"])])
+
+    # Gamma correction
+    gamma_str = config.str("gamma", DEFAULT_GAMMA)
+    if is_float(gamma_str) and float(gamma_str) >= 1.0:
+        app["gamma"] = float(gamma_str)
+        print("Gamma correction", ["disabled", "enabled"][int(app["gamma"] < 1.0)])
+    else:
+        return err("Gamma must be a floating point number >= 1.0")
 
     # Determine what POI to zoom onto
     app["c"] = None, None
