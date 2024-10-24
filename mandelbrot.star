@@ -38,8 +38,8 @@ DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down
 DEFAULT_CONTRAST = True  # Adjusts for maximal contrast
 DEFAULT_JULIA = False  # True to display (whole) julia set [faster]; false to display (zoomed in) mandelbrot
 DEFAULT_GAMMA = "1.0"  # Gamma correction, 1.0 = off; I did not find this to help much
-DEFAULT_OVERSAMPLE = "2"  # Oversample style (adaptive, none, or oversample multiplier)
-DEFAULT_GRADIENT = "random"  # Palette selection (random or named PREDEFINED_GRADIENT)
+DEFAULT_OVERSAMPLE = "2"  # Oversample style (adaptive, oversample multiplier 1 or more)
+DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFINED_GRADIENT)
 
 POI_MAX_TIME = 3  # Go with best POI if max time elapse
 SUBSAMPLE_MAX_TIME = 25  # Force stop Adaptive AA if max time elapsed
@@ -833,7 +833,7 @@ def get_schema():
     # if link == None:
     #     link = "N/A"
 
-    gradient_options = [schema.Option(value = "Random", display = "Randomized every time")]
+    gradient_options = [schema.Option(value = "random", display = "Randomized")]
     for g in PREDEFINED_GRADIENTS.keys():
         gradient_options.append(schema.Option(value = g, display = " ".join([word.capitalize() for word in g.split("-")])))
 
@@ -844,7 +844,6 @@ def get_schema():
                 id = "oversample",
                 name = "Oversample",
                 desc = "Oversample Method",
-                icon = "border-none",
                 default = DEFAULT_OVERSAMPLE,
                 options = [
                     schema.Option(value = "1", display = "None"),
@@ -855,6 +854,7 @@ def get_schema():
                     schema.Option(value = "32", display = "32X AA (julia might time out too)"),
                     schema.Option(value = "adaptive", display = "Adaptive AA (recommended)"),
                 ],
+                icon = "border-none",
             ),
             schema.Dropdown(
                 id = "gradient",
