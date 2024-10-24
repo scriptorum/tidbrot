@@ -9,14 +9,14 @@
 #
 load("math.star", "math")
 load("random.star", "random")
+load("re.star", "re")
 load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
-# load("cache.star", "cache")
 
 MIN_ITER = 150  # Minimum iterations
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
-JULIA_ZOOM = 1.0 # 0.5 = low detail, but wide view; 2 = high detail, right up in da face
+JULIA_ZOOM = 1.0  # 0.5 = low detail, but wide view; 2 = high detail, right up in da face
 ESCAPE_THRESHOLD = 4.0  # 4.0 standard, less for faster calc, but worse accuracy
 DISPLAY_WIDTH = 64  # Tidbyt is 64 pixels wide
 DISPLAY_HEIGHT = 32  # Tidbyt is 32 pixels high
@@ -24,18 +24,24 @@ CTRX, CTRY = -0.75, 0  # Mandelbrot center
 MINX, MINY, MAXX, MAXY = -2.5, -0.875, 1.0, 0.8753  # Bounds to use for mandelbrot set
 BLACK_COLOR = "#000000"  # Shorthand for black color
 MAX_INT = int(math.pow(2, 53))  # Guesstimate for Starlark max_int
-BLACK_PIXEL = render.Box( width = 1, height = 1, color = BLACK_COLOR, )  # Pregenerated 1x1 pixel black box
+BLACK_PIXEL = render.Box(width = 1, height = 1, color = BLACK_COLOR)  # Pregenerated 1x1 pixel black box
 POI_GRID_X = 8  # When exploring POIs, divides area into XY grid
 POI_GRID_Y = 4  # and checks random pixel in grid cell
 POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
-POI_MAX_ZOOM = 10000  # Don't magnify like a crazy person
+POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
-GAMMA_CORRECTION = 1.1  # Mild gamma correction seems to work best
 MAX_RECURSION = 3  # Max recursion for adaptive AA
-ADAPTIVE_AA_SAMPLES = 3  # Amount of oversampling per each adaptive AA
-BASE_ADAPTIVE_AA = 2  # Minimum oversampling Adaptive AA starts with
+ADAPTIVE_AA_SAMPLES = 3  # Amount of oversample per each adaptive AA
+BASE_ADAPTIVE_AA = 2  # Minimum oversample Adaptive AA starts with
 
-POI_MAX_TIME = 3  # Go with best POI if max time elapsed
+DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down darks to no lower than BRIGHTNESS_MIN
+DEFAULT_CONTRAST = True  # Adjusts for maximal contrast
+DEFAULT_JULIA = False  # True to display (whole) julia set [faster]; false to display (zoomed in) mandelbrot
+DEFAULT_GAMMA = "1.0"  # Gamma correction, 1.0 = off; I did not find this to help much
+DEFAULT_OVERSAMPLE = "2"  # Oversample style (adaptive, none, or oversample multiplier)
+DEFAULT_GRADIENT = "random"  # Palette selection (random or named PREDEFINED_GRADIENT)
+
+POI_MAX_TIME = 3  # Go with best POI if max time elapse
 SUBSAMPLE_MAX_TIME = 25  # Force stop Adaptive AA if max time elapsed
 NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
 CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
@@ -46,9 +52,9 @@ GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in,
 RANDOM_GRADIENT_STEPS = 64  # Higher = more color variation
 PREDEFINED_GRADIENTS_NUM_CYCLES = 4
 PREDEFINED_GRADIENTS = {
-    "neon-rose":  ((255, 0, 0), (255, 0, 255)),
+    "neon-rose": ((255, 0, 0), (255, 0, 255)),
     "spring-lime": ((0, 255, 0), (255, 255, 0)),
-    "seafoam":   ((0, 255, 0), (0, 255, 255)),
+    "seafoam": ((0, 255, 0), (0, 255, 255)),
     "ocean-wave": ((0, 0, 255), (0, 255, 255)),
     "electric-violet": ((0, 0, 255), (255, 0, 255)),
     "autumn-glow": ((0, 255, 0), (255, 255, 0), (255, 165, 0)),
@@ -63,7 +69,10 @@ PREDEFINED_GRADIENTS = {
     "iceberg": ((173, 216, 230), (224, 255, 255), (240, 248, 255)),
     "berry-blend": ((128, 0, 128), (153, 50, 204), (186, 85, 211)),
     "volcanic": ((105, 105, 105), (255, 69, 0), (139, 0, 0)),
-    "gray": ((32, 32, 32), (256, 256, 256)),
+    "red": ((80, 64, 0), (255, 0, 64)),
+    "green": ((0, 80, 64), (64, 255, 0)),
+    "blue": ((64, 0, 80), (0, 64, 255)),
+    "grey": ((80, 80, 80), (255, 255, 255)),
 }
 
 def main(config):
@@ -72,16 +81,17 @@ def main(config):
     print("Using random seed:", seed)
     app = {"config": config}
 
-    oversampling = config.str("oversampling", "adaptive")
+    oversample_str = config.str("oversample", DEFAULT_OVERSAMPLE)
     app["adaptive_aa"] = False
-    if oversampling == "adaptive":
+    app["oversample"] = 1
+    if oversample_str == "adaptive":
         app["oversample"] = BASE_ADAPTIVE_AA
         app["adaptive_aa"] = True
-    elif oversampling.isdigit():
-        app["oversample"] = int(oversampling)
+    elif is_int(oversample_str):
+        app["oversample"] = int(oversample_str)
     else:
-        return err("Unknown oversampling value: %s" % oversampling)
-    print("Oversampling:", app["oversample"], "Adaptive:", app["adaptive_aa"])
+        return err("Unknown oversample value: %s" % oversample_str)
+    print("Oversample:", str(app["oversample"]) + "X", "Adaptive:", app["adaptive_aa"])
 
     # Calculate internal map dimensions
     app["map_width"] = DISPLAY_WIDTH * app["oversample"]  # Pixels samples per row
@@ -90,11 +100,27 @@ def main(config):
     app["max_pixel_y"] = app["map_height"] - 1  # Maximum sample for y
 
     # Generate a color gradient
-    app["palette"] = config.str("palette", "random")
-    if app["palette"] != "random" and app["palette"] not in PREDEFINED_GRADIENTS:
-        return err("Unrecognized palette type: {}".format(app["palette"]))
-    print("Color Palette:", app["palette"])
-    app["gradient"] = generate_gradient(app["palette"])
+    gradient_str = config.str("gradient", DEFAULT_GRADIENT)
+    if gradient_str != "random" and gradient_str not in PREDEFINED_GRADIENTS:
+        return err("Unrecognized gradient type: {}".format(gradient_str))
+    app["gradient"] = generate_gradient(gradient_str)
+    print("Gradient selected:", gradient_str)
+
+    # Gamma correction
+    gamma_str = config.str("gamma", DEFAULT_GAMMA)
+    if is_float(gamma_str) and float(gamma_str) >= 1.0:
+        app["gamma"] = float(gamma_str)
+        print("Gamma correction", ["disabled", "enabled"][int(app["gamma"] < 1.0)])
+    else:
+        return err("Gamma must be a floating point number >= 1.0")
+
+    # Normalize brightness
+    app["brightness"] = config.bool("brightness", True)
+    print("Brightness normalization", ["disabled", "enabled"][int(app["brightness"])])
+
+    # Contrast correction
+    app["contrast"] = config.bool("contrast", True)
+    print("Contrast correction", ["disabled", "enabled"][int(app["contrast"])])
 
     # Determine what POI to zoom onto
     app["c"] = None, None
@@ -102,13 +128,13 @@ def main(config):
     app["poi_zoom_level"] = app["zoom_level"]
 
     # Slight changes for julia set
-    if config.bool("julia", False): # Is this a julia or mandelbrot fractal
+    if config.bool("julia", DEFAULT_JULIA):  # Is this a julia or mandelbrot fractal
         app["c"] = app["target"]
         app["target"] = 0.0, 0.0
         app["zoom_level"] = JULIA_ZOOM
         app["max_iter"] = zoom_to_iter(JULIA_ZOOM)
         print("Julia set enabled")
-    else: # Mandelbrot
+    else:  # Mandelbrot
         print("Zoom Level:", app["zoom_level"])
 
     # Generate the animation with all frames
@@ -154,17 +180,17 @@ def normalize_brightness(map):
         map["data"][i] = rgb_to_hex(*channels)
 
 # Apply gamma correction
-def gamma_correction(map):
-    print("Applying gamma correction of", GAMMA_CORRECTION)
+def gamma_correction(map, amount):
+    print("Applying gamma correction of", amount)
 
     for i in range(len(map["data"])):
         channels = list(hex_to_rgb(map["data"][i]))
         for c in range(len(channels)):
-            channels[c] = min(255, int(math.pow(channels[c] / 255.0, 1 / GAMMA_CORRECTION) * 255))
+            channels[c] = min(255, int(math.pow(channels[c] / 255.0, 1 / amount) * 255))
         map["data"][i] = rgb_to_hex(*channels)
 
 # Apply contrast correction
-def contrast_correction(map, min_scale = 0, max_scale = 255):
+def contrast_correction(map, min_scale=0, max_scale=255):
     print("Correcting contrast")
 
     # Convert all hex colors to RGB tuples
@@ -189,20 +215,25 @@ def contrast_correction(map, min_scale = 0, max_scale = 255):
     def stretch_channel(value, min_val, range_val):
         return min(255, int(((value - min_val) * (max_scale - min_scale) / range_val) + min_scale))
 
-    # Apply contrast stretching to each channel
+    # Clamp function to keep colors within the original gradient
+    def clamp_channel(value, original_min, original_max):
+        return max(min(value, original_max), original_min)
+
+    # Apply contrast stretching and clamp to original palette range
     stretched_data = [
         (
-            stretch_channel(color[0], min_r, range_r),
-            stretch_channel(color[1], min_g, range_g),
-            stretch_channel(color[2], min_b, range_b),
+            clamp_channel(stretch_channel(color[0], min_r, range_r), min_r, max_r),
+            clamp_channel(stretch_channel(color[1], min_g, range_g), min_g, max_g),
+            clamp_channel(stretch_channel(color[2], min_b, range_b), min_b, max_b),
         )
         for color in rgb_data
     ]
 
-    # Convert the stretched RGB values back to hex colors
+    # Convert the stretched and clamped RGB values back to hex colors
     map["data"] = [rgb_to_hex(*color) for color in stretched_data]
 
     return map
+
 
 def get_frames(app):
     print("Generating frame with max_iter:", app["max_iter"])
@@ -217,15 +248,21 @@ def get_frames(app):
     return frames
 
 def apply_after_effects(app, map):
-    if time.now().unix - START_TIME > NORMALIZE_MAX_TIME:
-        return map   
+    brightness = app["brightness"]
+    if not brightness or time.now().unix - START_TIME > NORMALIZE_MAX_TIME:
+        return map
     normalize_brightness(map)
-    if time.now().unix - START_TIME > CONTRAST_MAX_TIME:
+
+    contrast = app["contrast"]
+    if not contrast or time.now().unix - START_TIME > CONTRAST_MAX_TIME:
         return map
     contrast_correction(map)
-    if GAMMA_CORRECTION <= 1.0 or time.now().unix - START_TIME > GAMMA_MAX_TIME:
+
+    gamma = app["gamma"]
+    if gamma <= 1.0 or time.now().unix - START_TIME > GAMMA_MAX_TIME:
         return map
-    gamma_correction(map)
+    gamma_correction(app)
+
     return map
 
 def get_link(app):
@@ -235,7 +272,7 @@ def get_link(app):
     zoom = app["poi_zoom_level"]
 
     # Julia set fix
-    if app['c'] != (0.0, 0.0):
+    if app["c"] != (0.0, 0.0):
         x, y = app["c"][0], app["c"][1]
 
     return get_link_from(x, y, iter, zoom)
@@ -340,7 +377,7 @@ def find_poi():
 
     return bestx, besty, best_score, best_zoom
 
-# Performs the mandelbrot calculation on a single point
+# Performs the fractal calculation on a single point
 # Returns both the escape distance and the number of iterations
 # (cannot exceed iter_limit)
 def fractal_calc(x, y, iter_limit, cr = None, ci = None):
@@ -370,7 +407,6 @@ def fractal_calc(x, y, iter_limit, cr = None, ci = None):
 
     # Return max iteration if escape condition is not met
     return (iter_limit, zrsqr + zisqr)
-
 
 def int_to_hex(n):
     if n > 255:
@@ -469,7 +505,7 @@ def generate_gradient(pal_type):
     colors = PREDEFINED_GRADIENTS[pal_type]
     for _ in range(PREDEFINED_GRADIENTS_NUM_CYCLES):
         for color in colors:
-            gradient.append(color)    
+            gradient.append(color)
 
     return gradient
 
@@ -545,8 +581,6 @@ def alt(obj, field, value):
 
 # Generates a subsection of the fractal in map
 def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, cr, ci, depth = 0):
-    # print("GenerateMandelbrotArea map:", map["width"], map["height"], "pix:", orig_pix, "set:", orig_set, "limit:", iter_limit, "depth:", depth)
-
     # Initialize the stack with the first region to process
     stack = [(orig_pix, orig_set)]
 
@@ -562,7 +596,7 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
 
         # Determine some deltas
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
-        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)        
+        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
 
         # OPTIMIZATION: A small box can be filled in with the same color if the corners are identical
         if dxp <= 6 and dyp <= 6:
@@ -653,7 +687,7 @@ def generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci):
     if stored_val != -1:
         return stored_val
 
-    # Normal mandelbrot calculation
+    # Normal fractal calculation
     iter, _ = fractal_calc(xm, ym, iter_limit, cr, ci)
 
     # print("Fractal calc! @", xm, ym, "Iter:", iter, "Iter_limit:", iter_limit, "c:", cr, ci)
@@ -786,24 +820,32 @@ def random_color_tuple():
 def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
 
+def is_float(s):
+    float_regex = r"^[+-]?\d*\.?\d+([eE][+-]?\d+)?$"
+    return bool(re.match(float_regex, s))
+
+def is_int(s):
+    int_regex = r'^[+-]?\d+$'    
+    return bool(re.match(int_regex, s))
+
 def get_schema():
     # link = cache.get("last_url")
     # if link == None:
     #     link = "N/A"
 
-    gradient_options = [ schema.Option(value="Random", display="Randomized every time") ]
+    gradient_options = [schema.Option(value = "Random", display = "Randomized every time")]
     for g in PREDEFINED_GRADIENTS.keys():
-        gradient_options.append(schema.Option(value=g, display=" ".join([word.capitalize() for word in g.split("-")])))
+        gradient_options.append(schema.Option(value = g, display = " ".join([word.capitalize() for word in g.split("-")])))
 
     return schema.Schema(
         version = "1",
         fields = [
             schema.Dropdown(
-                id = "oversampling",
-                name = "Oversampling",
-                desc = "Oversampling Method",
+                id = "oversample",
+                name = "Oversample",
+                desc = "Oversample Method",
                 icon = "border-none",
-                default = "adaptive",
+                default = DEFAULT_OVERSAMPLE,
                 options = [
                     schema.Option(value = "1", display = "None"),
                     schema.Option(value = "2", display = "2X AA (slower)"),
@@ -815,19 +857,40 @@ def get_schema():
                 ],
             ),
             schema.Dropdown(
-                id = "palette",
-                name = "Palette",
-                desc = "Color palette/gradient",
-                default = "random",
-                icon = "palette",
+                id = "gradient",
+                name = "Gradient",
+                desc = "Color gradient/gradient",
+                default = DEFAULT_GRADIENT,
+                icon = "gradient",
                 options = gradient_options,
             ),
             schema.Toggle(
-                id="julia",
-                name="Julia",
-                desc="Display a julia set (faster)",
-                default=False,
+                id = "julia",
+                name = "Julia",
+                desc = "Display a julia set (faster)",
+                default = DEFAULT_JULIA,
                 icon = "puzzle-piece",
+            ),
+            schema.Toggle(
+                id = "brightness",
+                name = "Normalize Brightness",
+                desc = "Darker darks, lighter lights",
+                default = DEFAULT_BRIGHTNESS,
+                icon = "lightbulb",
+            ),
+            schema.Toggle(
+                id = "contrast",
+                name = "Contrast Stretch",
+                desc = "Improves contrast",
+                default = DEFAULT_CONTRAST,
+                icon = "circle-half-stroke",
+            ),
+            schema.Text(
+                id = "gamma",
+                name = "Gamma Correction",
+                desc = "Monitor gamma (1.0 = off)",
+                default = DEFAULT_GAMMA,
+                icon = "tv",
             ),
         ],
     )
