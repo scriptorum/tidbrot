@@ -3,9 +3,8 @@
 #   + Grid up area of POI (say 8x4)
 #   + Add extra points outside of area (an additional 4x2 perhaps)
 #   + Perform fitness scores of centered at 0,0 +/- 2,1 and keep best
-# - Adaptive AA:
-#   + Need to perform progressive AA, adaptive AA is selective but not progressive enough,
-#     so if it is interrupted, it can look jarring
+#
+# - Color Cycling?
 #
 load("math.star", "math")
 load("random.star", "random")
