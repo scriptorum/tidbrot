@@ -37,11 +37,11 @@ POI_ZOOM = DISPLAY_WIDTH / POI_GRID_X  # This represents magnification of ...
 POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
 
-MAX_ADAPTIVE_PASSES = 32  # Max recursion for adaptive AA
-ADAPTIVE_AA_START_RADIUS = 0.35
-ADAPTIVE_AA_INC_RADIUS = 0.01
-ADAPTIVE_AA_INC_ANGLE = 137.5
-ADAPTIVE_AA_START_ANGLE = random.number(0, 360)
+MAX_ADAPTIVE_PASSES = 32  # Max number of passes for adaptive AA
+ADAPTIVE_AA_START_RADIUS = 0.35 # Adaptive AA oversamples this distance away from the pixel
+ADAPTIVE_AA_INC_RADIUS = 0.01 # Adaptive AA increases the distance this amount per pass
+ADAPTIVE_AA_START_ANGLE = random.number(0, 360) # Adaptive AA initial angle for oversample
+ADAPTIVE_AA_INC_ANGLE = 137.5 # Adaptive AA changes the angle by this amount every pass
 
 DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down darks to no lower than BRIGHTNESS_MIN
 DEFAULT_CONTRAST = True  # Adjusts for maximal contrast
@@ -52,8 +52,8 @@ DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFIN
 DEFAULT_ADAPTIVE_AA = True # Additional AA passes as time allows
 
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-RANDOM_GRADIENT_STEPS = 64  # Higher = more color variation
-PREDEFINED_GRADIENTS_NUM_CYCLES = 4
+RANDOM_GRADIENT_STEPS = 64  # Number of colors in a randomize gradient
+PREDEFINED_GRADIENTS_NUM_CYCLES = 4 # Number of times to repeat the colors in the gradient
 PREDEFINED_GRADIENTS = {
     "neon-rose": ((255, 0, 0), (255, 0, 255)),
     "spring-lime": ((0, 255, 0), (255, 255, 0)),
@@ -76,8 +76,9 @@ PREDEFINED_GRADIENTS = {
     "green": ((0, 80, 64), (64, 255, 0)),
     "blue": ((64, 0, 80), (0, 64, 255)),
     "grey": ((80, 80, 80), (255, 255, 255)),
-}
+} # Predefined color gradients to select instead of using random colors
 
+# This is the main main, no other mains are more main than this main
 def main(config):
     seed = int(config.str("seed", time.now().unix))
     random.seed(seed)
@@ -151,6 +152,7 @@ def main(config):
     return root
 
 # Ya know, it uh, normalizes ... the brightness
+# Makes the darks darker and the brights brighter, to a tpoint
 def normalize_brightness(map):
     # Determine low and high channel values
     lowest_channel = 255
@@ -163,7 +165,7 @@ def normalize_brightness(map):
             elif channels[c] > highest_channel:
                 highest_channel = channels[c]
 
-    # Determine adjustment
+    # Determine adjustment. Don't force brightness below minimum amount.
     subtraction = 0
     if lowest_channel > BRIGHTNESS_MIN:
         subtraction = lowest_channel - BRIGHTNESS_MIN
@@ -227,6 +229,8 @@ def contrast_correction(map, min_scale=0, max_scale=255):
 
     return map
 
+# Renders one or more animation frames, suitable for sending to an Animation
+# object. Well, it used to do multiple, now it just renders one.
 def get_frames(app):
     print("Generating frame with max_iter:", app["max_iter"])
 
@@ -239,6 +243,7 @@ def get_frames(app):
     frames.append(tidbytMap)
     return frames
 
+# Correct issues with brightness, contrast, and gamma
 def apply_after_effects(app, map):
     brightness = app["brightness"]
     if not brightness or time.now().unix - START_TIME > NORMALIZE_MAX_TIME:
@@ -257,6 +262,7 @@ def apply_after_effects(app, map):
 
     return map
 
+# Returns a link to gart.nz, which you could use to look at the fractal online
 def get_link(app):
     x = app["target"][0]
     y = app["target"][1]
@@ -278,15 +284,8 @@ def get_link_from(x, y, iter, zoom):
         str(int(zoom * 600)),
     )
 
-def float_range(start, end, num_steps, inclusive = False):
-    step_size = (float(end) - float(start)) / num_steps
-    result = []
-    for i in range(num_steps):
-        result.append(start + i * step_size)
-    if inclusive:
-        result.append(end)
-    return result
-
+# Converts a "zoom level" to a maximum number of iterations.
+# As you zoom in, you need more iterations to clearly render the boundary.
 def zoom_to_iter(zoom):
     return int(MIN_ITER + max(0, zoom * ZOOM_TO_ITER))
 
@@ -558,8 +557,6 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
         # Pop the last item from the stack
         pix, set = stack.pop()
 
-        # print("Popped off stack:", pix, set)
-
         # Determine some deltas
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
         dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
@@ -692,16 +689,19 @@ def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
 
     return color
 
+# Fills a rectangular area with a single color tuple
 def flood_fill(map, area, color):
     for y in range(area["y1"], area["y2"] + 1):
         for x in range(area["x1"], area["x2"] + 1):
             map["data"][y * map["width"] + x] = color
 
+# Creates a blank map object
 def create_map(width, height, fill = -1):
     data_size = width * height
     data = [fill] * data_size
     return {"data": data, "width": width, "height": height}
 
+# Creates a fractal and downsamples it to the final display dimensions
 def render_fractal(app, x, y):
     # Determine coordinates
     half_width = (MAXX - MINX) / app["zoom_level"] / 2.0
@@ -719,7 +719,7 @@ def render_fractal(app, x, y):
     set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
     generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive"], *app["c"])
 
-    # Render an iteration map to an RGB map of the display size
+    # Downsample to the display size
     map = downsample(app["map"], DISPLAY_WIDTH)
     return map
 
@@ -800,26 +800,32 @@ def render_tidbyt(map):
         children = rows,
     )
 
+# Shorthand used in render_tidbyt
 def add_box(row, run_length, color):
     if run_length == 1 and color == BLACK_PIXEL:
         row.append(BLACK_PIXEL)
     else:
         row.append(render.Box(width = run_length, height = 1, color = color))
 
+# Generates a random color in RGB tuple format
 def random_color_tuple():
     return (random.number(0, 255), random.number(0, 255), random.number(0, 255))
 
+# Generates random floating point number from 0.0 to 1.0
 def rnd():
     return float(random.number(0, MAX_INT)) / float(MAX_INT)
 
+# Returns true if this strange should successfully cast to a float
 def is_float(s):
     float_regex = r"^[+-]?\d*\.?\d+([eE][+-]?\d+)?$"
     return bool(re.match(float_regex, s))
 
+# Returns true if this strange should successfully cast to an int
 def is_int(s):
     int_regex = r'^[+-]?\d+$'    
     return bool(re.match(int_regex, s))
 
+# Returns the Tidbyt schemas for setting app options
 def get_schema():
     # link = cache.get("last_url")
     # if link == None:
