@@ -13,6 +13,13 @@ load("render.star", "render")
 load("schema.star", "schema")
 load("time.star", "time")
 
+START_TIME = time.now().unix  # Timestamp at start of app
+POI_MAX_TIME = 3  # Go with best POI if max time elapse
+ADAPTIVE_AA_MAX_TIME = 20  # Stop Adaptive AA if max time elapsed
+NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
+CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
+GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
+
 MIN_ITER = 150  # Minimum iterations
 ZOOM_TO_ITER = 1.0  # 1.0 standard, less for faster calc, more for better accuracy
 JULIA_ZOOM = 1.0  # 0.5 = low detail, but wide view; 2 = high detail, right up in da face
@@ -43,13 +50,6 @@ DEFAULT_GAMMA = "1.0"  # Gamma correction, 1.0 = off; I did not find this to hel
 DEFAULT_OVERSAMPLE = "2"  # Oversample style (1 or more)
 DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFINED_GRADIENT)
 DEFAULT_ADAPTIVE_AA = True # Additional AA passes as time allows
-
-POI_MAX_TIME = 3  # Go with best POI if max time elapse
-ADAPTIVE_AA_MAX_TIME = 20  # Force stop Adaptive AA if max time elapsed
-NORMALIZE_MAX_TIME = 28  # Skip normalization if max time elapsed
-CONTRAST_MAX_TIME = 29  # Skip contrast correction if max time elapsed
-GAMMA_MAX_TIME = 29  # Skip gamma correction if max time elapsed
-START_TIME = time.now().unix  # Timestamp at start of app
 
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
 RANDOM_GRADIENT_STEPS = 64  # Higher = more color variation
@@ -84,12 +84,14 @@ def main(config):
     print("Using random seed:", seed)
     app = {"config": config}
 
+    # Calculating oversampling parameters
     app["adaptive"] = config.bool("adaptive", DEFAULT_ADAPTIVE_AA)    
     oversample_str = config.str("oversample", DEFAULT_OVERSAMPLE)
     if not is_int(oversample_str):
         return err("Unknown oversample value: %s" % oversample_str)
     app["oversample"] = int(oversample_str)
     print("Oversample:", oversample_str + "X", " ... AdaptiveAA:", ["disabled", "enabled"][int(app["adaptive"])])
+    
     # Calculate internal map dimensions
     app["map_width"] = DISPLAY_WIDTH * app["oversample"]  # Pixels samples per row
     app["map_height"] = DISPLAY_HEIGHT * app["oversample"]  # Pixel samples per column
@@ -103,15 +105,15 @@ def main(config):
     app["gradient"] = generate_gradient(gradient_str)
     print("Gradient selected:", gradient_str)
 
-    # Normalize brightness
+    # Determine if we should normalize brightness
     app["brightness"] = config.bool("brightness", True)
     print("Brightness normalization", ["disabled", "enabled"][int(app["brightness"])])
 
-    # Contrast correction
+    # Determine if we should perform contrast correction
     app["contrast"] = config.bool("contrast", True)
     print("Contrast correction", ["disabled", "enabled"][int(app["contrast"])])
 
-    # Gamma correction
+    # Determine how much gamma correction
     gamma_str = config.str("gamma", DEFAULT_GAMMA)
     if is_float(gamma_str) and float(gamma_str) >= 1.0:
         app["gamma"] = float(gamma_str)
@@ -288,8 +290,8 @@ def float_range(start, end, num_steps, inclusive = False):
 def zoom_to_iter(zoom):
     return int(MIN_ITER + max(0, zoom * ZOOM_TO_ITER))
 
+# Chooses a respectable point of interest to render
 def choose_poi(app):
-    # Find a respectable point of interest
     print("Determining point of interest")
     x, y, best, zoom = find_poi()
 
@@ -301,7 +303,7 @@ def choose_poi(app):
 
     # cache.set("last_url", link, ttl_seconds=99999999) # But no way to display this to user :(
 
-# Finds a respectable point of interest ... allgedly
+# Searches through many potential points of interest
 def find_poi():
     end_time = START_TIME + POI_MAX_TIME
     bestx, besty, best_score, best_zoom = 0, 0, 0, 1
@@ -398,6 +400,7 @@ def fractal_calc(x, y, iter_limit, cr = None, ci = None):
     # Return max iteration if escape condition is not met
     return (iter_limit, zrsqr + zisqr)
 
+# Converts an integer color channel to hexadecimal
 def int_to_hex(n):
     if n > 255:
         fail("Can't convert value " + str(n) + " to hex digit")
@@ -408,44 +411,26 @@ def int_to_hex(n):
 def rgb_to_hex(r, g, b):
     return "#" + int_to_hex(r) + int_to_hex(g) + int_to_hex(b)
 
-def hex_to_rgb(hex_color):
-    if type(hex_color) != type("string"):
-        return (255, 0, 255)  # Purple to help debug issues
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return (r, g, b)
-
+# Converts a number of iterations until threshold escape to a color
 def get_gradient_rgb(gradient, max_iter, iter):
-    if iter == max_iter:
-        return (0, 0, 0)
+    if iter >= max_iter or iter < 0:
+        return (0, 0, 0) if iter == max_iter else fail("Bad iterations in get_gradient_rgb:", iter, "max:", max_iter)
 
-    elif iter > max_iter or iter < 0:
-        fail("Bad iterations in get_gradient_rgb:", iter, "max:", max_iter)
-
-    # Convert iterations to a color
+    # Precompute values
+    num_keyframes = len(gradient) - 1
     t = (math.pow(math.log(iter), GRADIENT_SCALE_FACTOR) / len(gradient)) % 1.0
 
-    # Number of keyframes
-    num_keyframes = len(gradient) - 1
-    #print("Num keyframes:", num_keyframes)
-
-    # Ensure we are covering the whole gradient range
+    # Map t to the gradient keyframes
     frame_pos = t * num_keyframes
+    lower_frame = int(frame_pos)
+    upper_frame = lower_frame + 1 if lower_frame < num_keyframes else num_keyframes
 
-    #print("Frame pos:", frame_pos)
-    lower_frame = int(frame_pos)  # Index of the lower keyframe
-    upper_frame = min(lower_frame + 1, num_keyframes)  # Index of the upper keyframe
+    # Linear interpolation factor
+    local_t = frame_pos - lower_frame
 
-    # Fractional part for interpolation between the two keyframes
-    local_t = frame_pos - float(lower_frame)
-
-    # Get the colors of the two keyframes to blend between
+    # Linear interpolation (LERP) for RGB channels
     color_start = gradient[lower_frame]
     color_end = gradient[upper_frame]
-
-    # Perform linear interpolation (LERP) between the two colors
     r = int(color_start[0] + local_t * (color_end[0] - color_start[0]))
     g = int(color_start[1] + local_t * (color_end[1] - color_start[1]))
     b = int(color_start[2] + local_t * (color_end[2] - color_start[2]))
@@ -500,10 +485,10 @@ def alter_color_rgb(color):
     new_color[keep_idx] = color[keep_idx]
     return new_color
 
-# Renders a line
-# Returns the color used if they are all the same, otherwise False
+# Renders a line of a fractal. Used for boundry optimization.
+# Returns the color used if they are all the same, otherwise False.
 # If match_color is passed something other than False, then it will
-# compare all colors against this value
+# compare all colors against this value.
 def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient, cr, ci):
     xm_step, ym_step = 0, 0
 
