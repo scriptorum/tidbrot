@@ -626,9 +626,12 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
                 # This will track points that could benefit from more detailing
                 detail_points.append({ "xp":xp, "yp":yp, "xm":xm, "ym":ym })
 
-    if not adaptive_aa:
-        return
-    
+    # Add additional AA if we can
+    if adaptive_aa:
+        perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, ci, dxm, dym)
+
+# Performs as many passes of spiral AA as time allows
+def perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, ci, dxm, dym):
     # Generate more AA details for targeted areas
     # Does this by spiraling around the pixel and averaging the samples
     print("Beginning adaptive AA on", len(detail_points), "points")
