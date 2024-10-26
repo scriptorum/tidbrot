@@ -31,7 +31,7 @@ POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
 
 MAX_ADAPTIVE_PASSES = 32  # Max recursion for adaptive AA
-ADAPTIVE_AA_START_RADIUS = 0.5
+ADAPTIVE_AA_START_RADIUS = 0.35
 ADAPTIVE_AA_INC_RADIUS = 0.01
 ADAPTIVE_AA_INC_ANGLE = 137.5
 ADAPTIVE_AA_START_ANGLE = random.number(0, 360)
@@ -154,7 +154,7 @@ def normalize_brightness(map):
     lowest_channel = 255
     highest_channel = 0
     for i in range(len(map["data"])):
-        channels = hex_to_rgb(map["data"][i])
+        channels = map["data"][i]
         for c in range(len(channels)):
             if channels[c] < lowest_channel:
                 lowest_channel = channels[c]
@@ -171,32 +171,29 @@ def normalize_brightness(map):
 
     # Normalize data
     for i in range(len(map["data"])):
-        channels = list(hex_to_rgb(map["data"][i]))
+        channels = list(map["data"][i])
         for c in range(len(channels)):
             channels[c] = min(255, int(channels[c] * multiplier - subtraction))
-        map["data"][i] = rgb_to_hex(*channels)
+        map["data"][i] = channels
 
 # Apply gamma correction
 def gamma_correction(map, amount):
     print("Applying gamma correction of", amount)
 
     for i in range(len(map["data"])):
-        channels = list(hex_to_rgb(map["data"][i]))
+        channels = list(map["data"][i])
         for c in range(len(channels)):
             channels[c] = min(255, int(math.pow(channels[c] / 255.0, 1 / amount) * 255))
-        map["data"][i] = rgb_to_hex(*channels)
+        map["data"][i] = channels
 
 # Apply contrast correction
 def contrast_correction(map, min_scale=0, max_scale=255):
     print("Correcting contrast")
 
-    # Convert all hex colors to RGB tuples
-    rgb_data = [hex_to_rgb(color) for color in map["data"]]
-
     # Separate the RGB channels
-    reds = [color[0] for color in rgb_data]
-    greens = [color[1] for color in rgb_data]
-    blues = [color[2] for color in rgb_data]
+    reds = [color[0] for color in map["data"]]
+    greens = [color[1] for color in map["data"]]
+    blues = [color[2] for color in map["data"]]
 
     # Find the min and max values for each channel
     min_r, max_r = min(reds), max(reds)
@@ -217,20 +214,16 @@ def contrast_correction(map, min_scale=0, max_scale=255):
         return max(min(value, original_max), original_min)
 
     # Apply contrast stretching and clamp to original palette range
-    stretched_data = [
+    map["data"] = [
         (
             clamp_channel(stretch_channel(color[0], min_r, range_r), min_r, max_r),
             clamp_channel(stretch_channel(color[1], min_g, range_g), min_g, max_g),
             clamp_channel(stretch_channel(color[2], min_b, range_b), min_b, max_b),
         )
-        for color in rgb_data
+        for color in map["data"]
     ]
 
-    # Convert the stretched and clamped RGB values back to hex colors
-    map["data"] = [rgb_to_hex(*color) for color in stretched_data]
-
     return map
-
 
 def get_frames(app):
     print("Generating frame with max_iter:", app["max_iter"])
@@ -258,7 +251,7 @@ def apply_after_effects(app, map):
     gamma = app["gamma"]
     if gamma <= 1.0 or time.now().unix - START_TIME > GAMMA_MAX_TIME:
         return map
-    gamma_correction(app)
+    gamma_correction(map, gamma)
 
     return map
 
@@ -424,10 +417,6 @@ def hex_to_rgb(hex_color):
     b = int(hex_color[4:6], 16)
     return (r, g, b)
 
-def iter_to_color(gradient, max_iter, iter):
-    channels = get_gradient_rgb(gradient, max_iter, iter)
-    return rgb_to_hex(*channels)
-
 def get_gradient_rgb(gradient, max_iter, iter):
     if iter == max_iter:
         return (0, 0, 0)
@@ -470,13 +459,13 @@ def blend_colors(*colors):
     tr, tg, tb = 0, 0, 0
     count = 0
     for i in range(0, len(colors)):
-        r, g, b = hex_to_rgb(colors[i])
+        r, g, b = colors[i]
         tr += r
         tg += g
         tb += b
         count += 1
 
-    return rgb_to_hex(int(tr / count), int(tg / count), int(tb / count))
+    return (int(tr / count), int(tg / count), int(tb / count))
 
 # Generates a random or predefined color gradient
 def generate_gradient(pal_type):
@@ -659,6 +648,7 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
         return
     
     # Generate more AA details for targeted areas
+    # Does this by spiraling around the pixel and averaging the samples
     print("Beginning adaptive AA on", len(detail_points), "points")
     radius = ADAPTIVE_AA_START_RADIUS
     angle = ADAPTIVE_AA_START_ANGLE
@@ -673,7 +663,7 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
         spiraly = radius * math.sin(math.radians(angle)) * dym
 
         # Perform additional sample pass
-        print("Adding more details! PASS", "#" + str(n+1), " Elapsed:", elapsed, " Offset:", spiralx, spiraly, "Radius:", radius, "Angle:", angle)
+        print("Adding more details! PASS", "#" + str(n+1), " Elapsed:", elapsed, "Radius:", radius, "Angle:", angle)
         for point in detail_points:
             generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly)
 
@@ -688,7 +678,7 @@ def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx,
     if iter == iter_limit:
         iter = max_iter
     orig_color = map["data"][index]
-    color = iter_to_color(gradient, max_iter, iter)
+    color = get_gradient_rgb(gradient, max_iter, iter)
     if orig_color == color:
         return
 
@@ -696,7 +686,7 @@ def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx,
     map["data"][index] = blend
     # print("Blended",orig_color,"+",color,"=",blend)
 
-# Calculates color for a point on the map and returns them
+# Calculates color tuple for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
     # print("Generating pixel at:", xp, yp, "Map:", map["width"], map["height"])
@@ -712,7 +702,7 @@ def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
         iter = max_iter
 
     # Save iterations for pixel in map
-    color = iter_to_color(gradient, max_iter, iter)
+    color = get_gradient_rgb(gradient, max_iter, iter)
     map["data"][yp * map["width"] + xp] = color
 
     return color
@@ -803,7 +793,7 @@ def render_tidbyt(map):
         run_length = 0
 
         for _ in range(DISPLAY_WIDTH):  # x
-            color = map["data"][index]
+            color = rgb_to_hex(*map["data"][index]) # RGB Tuple to "#RRGGBB"
             index += 1
 
             # Add a 1x1 box with the appropriate color to the row
