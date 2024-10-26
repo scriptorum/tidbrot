@@ -371,33 +371,26 @@ def find_poi():
 # Performs the fractal calculation on a single point
 # Returns both the escape distance and the number of iterations
 # (cannot exceed iter_limit)
-def fractal_calc(x, y, iter_limit, cr = None, ci = None):
-    # Set the constant c
-    if cr == None:
-        # For Mandelbrot, c is the pixel's coordinates, and z starts at 0
-        cr, ci = x, y
-        zr, zi = 0.0, 0.0
-    else:
-        # For Julia, use c as supplied and z is the pixel's coordinates
-        zr, zi = x, y
-
-    # Precompute squares
-    zrsqr, zisqr = zr * zr, zi * zi
+def fractal_calc(x, y, iter_limit, cr=None, ci=None):
+    # Determine initial values for Mandelbrot or Julia set
+    zr, zi = (0.0, 0.0) if cr == None else (x, y)
+    cr, ci = (x, y) if cr == None else (cr, ci)
 
     # Iteration loop
     for iteration in range(1, iter_limit + 1):
-        # Escape condition check: |z|^2 = x2 + y2 > ESCAPE_THRESHOLD
-        if zrsqr + zisqr > ESCAPE_THRESHOLD:
-            return (iteration, zrsqr + zisqr)
-
-        # Update z: zr_new = zr^2 - zi^2 + cr, zi_new = 2 * zr * zi + ci
-        zr, zi = zrsqr - zisqr + cr, 2 * zr * zi + ci
-
-        # Update squared terms for the next iteration
+        # Compute squares
         zrsqr, zisqr = zr * zr, zi * zi
 
-    # Return max iteration if escape condition is not met
-    return (iter_limit, zrsqr + zisqr)
+        # Escape condition
+        if zrsqr + zisqr > ESCAPE_THRESHOLD:
+            return iteration, zrsqr + zisqr
+
+        # Update zr and zi using precomputed squares and existing terms
+        zi = 2 * zr * zi + ci
+        zr = zrsqr - zisqr + cr
+
+    # Return if max iterations reached without escaping
+    return iter_limit, zr * zr + zi * zi
 
 # Converts an integer color channel to hexadecimal
 def int_to_hex(n):
