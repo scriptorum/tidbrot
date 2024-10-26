@@ -558,12 +558,13 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
         if dxp <= 6 and dyp <= 6:
             color1 = generate_pixel(map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit, gradient, cr, ci)
             color2 = generate_pixel(map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit, gradient, cr, ci)
-            color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient, cr, ci)
-            color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient, cr, ci)
-            if color1 == color2 and color2 == color3 and color3 == color4:
-                # print("Flood filling small area of same corners")
-                flood_fill(map, pix, color1)
-                continue
+            if color1 == color2:
+                color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient, cr, ci)
+                if color2 == color3:
+                    color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient, cr, ci)
+                    if color3 == color4:
+                        flood_fill(map, pix, color1)
+                        continue
 
         # OPTIMIZATION: A border with the same iterations can be filled with the same color
         color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient, cr, ci)
@@ -574,7 +575,6 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
         if color != False:
             color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient, cr, ci)
         if color != False:
-            # print("Flood filling area of same border!")
             flood_fill(map, pix, color)
             continue
 
@@ -588,8 +588,10 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             sym_below = set["y1"] + (splityp + 1) * dym
 
             # Add sub-regions to the stack
-            stack.append((alt(pix, "y1", syp_below), alt(set, "y1", sym_below)))
-            stack.append((alt(pix, "y2", syp_above), alt(set, "y2", sym_above)))
+            stack.extend([
+                (alt(pix, "y1", syp_below), alt(set, "y1", sym_below)),
+                (alt(pix, "y2", syp_above), alt(set, "y2", sym_above)),
+            ])
             continue
 
         # Perform horizontal split
@@ -602,8 +604,10 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             sxm_right = set["x1"] + (splitxp + 1) * dxm
 
             # Add sub-regions to the stack
-            stack.append((alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)))
-            stack.append((alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)))
+            stack.extend([
+                (alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)),
+                (alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)),
+            ])
             continue
 
         # Generate all pixels for this area
@@ -652,14 +656,19 @@ def perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, 
 # Generates additional details for a set of specific regions using spiral AA
 def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly):
     index = point["yp"] * map["width"] + point["xp"]
+
+    # Normal fractal calculation
     iter, _ = fractal_calc(point["xm"] + spiralx, point["ym"] + spiraly, iter_limit, cr, ci)
     if iter == iter_limit:
         iter = max_iter
+
+    # Get color of new sample
     orig_color = map["data"][index]
     color = get_gradient_rgb(gradient, max_iter, iter)
     if orig_color == color:
         return
 
+    # Blend in new oversample color 33% with existing color
     blend = blend_colors(orig_color, orig_color, color)
     map["data"][index] = blend
     # print("Blended",orig_color,"+",color,"=",blend)
@@ -667,29 +676,29 @@ def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx,
 # Calculates color tuple for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
 def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
-    # print("Generating pixel at:", xp, yp, "Map:", map["width"], map["height"])
-    stored_val = map["data"][yp * map["width"] + xp]
+    data = map["data"]
+    index = yp * map["width"] + xp
+    stored_val = data[index]
     if stored_val != -1:
         return stored_val
 
     # Normal fractal calculation
     iter, _ = fractal_calc(xs, ys, iter_limit, cr, ci)
-
-    # print("Fractal calc! @", xm, ym, "Iter:", iter, "Iter_limit:", iter_limit, "c:", cr, ci)
     if iter == iter_limit:
         iter = max_iter
 
     # Save iterations for pixel in map
     color = get_gradient_rgb(gradient, max_iter, iter)
-    map["data"][yp * map["width"] + xp] = color
+    data[index] = color
 
     return color
 
 # Fills a rectangular area with a single color tuple
 def flood_fill(map, area, color):
     for y in range(area["y1"], area["y2"] + 1):
+        row_index = y * map["width"]
         for x in range(area["x1"], area["x2"] + 1):
-            map["data"][y * map["width"] + x] = color
+            map["data"][row_index + x] = color
 
 # Creates a blank map object
 def create_map(width, height, fill = -1):
