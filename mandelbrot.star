@@ -1,9 +1,7 @@
-# Next Step:
-# - POI Nudging Routine:
+# - POI Nudging Routine?
 #   + Grid up area of POI (say 8x4)
 #   + Add extra points outside of area (an additional 4x2 perhaps)
 #   + Perform fitness scores of centered at 0,0 +/- 2,1 and keep best
-#
 # - Color Cycling?
 #
 load("math.star", "math")
