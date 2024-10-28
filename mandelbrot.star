@@ -1,8 +1,10 @@
-# - POI Nudging Routine?
-#   + Grid up area of POI (say 8x4)
-#   + Add extra points outside of area (an additional 4x2 perhaps)
-#   + Perform fitness scores of centered at 0,0 +/- 2,1 and keep best
-# - Color Cycling?
+# Possible additions
+# - POI Nudging
+# - Color Cycling
+# - Improved Adaptive AA passes
+#
+# Not going to do
+# - Zoom animation; poor quality, high chance of time out
 #
 load("math.star", "math")
 load("random.star", "random")
@@ -37,8 +39,8 @@ BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below t
 
 MAX_ADAPTIVE_PASSES = 32  # Max number of passes for adaptive AA
 ADAPTIVE_AA_START_RADIUS = 0.35 # Adaptive AA oversamples this distance away from the pixel
-ADAPTIVE_AA_INC_RADIUS = 0.01 # Adaptive AA increases the distance this amount per pass
-ADAPTIVE_AA_START_ANGLE = random.number(0, 360) # Adaptive AA initial angle for oversample
+ADAPTIVE_AA_INC_RADIUS = 0.015 # Adaptive AA increases the distance this amount per pass
+ADAPTIVE_AA_START_ANGLE = 90 #random.number(0, 360) # Adaptive AA initial angle for oversample
 ADAPTIVE_AA_INC_ANGLE = 137.5 # Adaptive AA changes the angle by this amount every pass
 
 DEFAULT_BRIGHTNESS = True  # Adjusts for maximal brightness and also brings down darks to no lower than BRIGHTNESS_MIN
@@ -101,8 +103,8 @@ def main(config):
     gradient_str = config.str("gradient", DEFAULT_GRADIENT)
     if gradient_str != "random" and gradient_str not in PREDEFINED_GRADIENTS:
         return err("Unrecognized gradient type: {}".format(gradient_str))
-    app["gradient"] = generate_gradient(gradient_str)
     print("Gradient selected:", gradient_str)
+    app["gradient"] = generate_gradient(gradient_str)
 
     # Determine if we should normalize brightness
     app["brightness"] = config.bool("brightness", True)
@@ -120,20 +122,44 @@ def main(config):
     else:
         return err("Gamma must be a floating point number >= 1.0")
 
+    if config.bool("julia", DEFAULT_JULIA):  # Is this a julia or mandelbrot fractal
+        print("Julia set enabled")
+
+    # Look for manual POI
+    poi_x = config.str("x", None)
+    poi_y = config.str("y", None)
+    poi_zoom = config.str("zoom", None)
+    poi_args_supplied = int(is_float(poi_x)) + int(is_float(poi_y)) + int(is_float(poi_zoom))
+    if poi_args_supplied == 1 or poi_args_supplied == 2:
+        return err("Must supply numbers for x+y+zoom to specify POI")
+        
     # Determine what POI to zoom onto
-    app["c"] = None, None
-    choose_poi(app)  # Choose a point of interest
-    app["poi_zoom_level"] = app["zoom_level"]
+    if poi_args_supplied == 0:
+        # Choose a point of interest
+        choose_poi(app)  
+    else:
+        # One was given to us
+        app["target"] = float(poi_x), float(poi_y)
+        app["zoom_level"] = float(poi_zoom)
+        app["max_iter"] = zoom_to_iter(app["zoom_level"])
+
+    # After the POI is generated, an unknown number of rnd() calls were made
+    # Reset the random seed so the results are otherwise predictable!
+    random.seed(seed)
 
     # Slight changes for julia set
-    if config.bool("julia", DEFAULT_JULIA):  # Is this a julia or mandelbrot fractal
+    app["c"] = None, None
+    app["poi_zoom_level"] = app["zoom_level"]
+    if config.bool("julia", DEFAULT_JULIA):
         app["c"] = app["target"]
         app["target"] = 0.0, 0.0
         app["zoom_level"] = JULIA_ZOOM
         app["max_iter"] = zoom_to_iter(JULIA_ZOOM)
-        print("Julia set enabled")
     else:  # Mandelbrot
         print("Zoom Level:", app["zoom_level"])
+
+    # Cache fractal coordinates for each point
+    cache_fractal_coords(app)
 
     # Generate the animation with all frames
     frames = get_frames(app)
@@ -148,6 +174,31 @@ def main(config):
     print("Elapsed time:", time.now().unix - START_TIME)
 
     return root
+
+def cache_fractal_coords(app):
+    print ("Caching mandelbrot coordinates")
+    half_width = (MAXX - MINX) / (2.0 * app["zoom_level"])
+    half_height = (MAXY - MINY) / (2.0 * app["zoom_level"])
+    minx, miny = app["target"][0] - half_width, app["target"][1] - half_height
+    dxm = (2 * half_width) / app["max_pixel_x"]
+    dym = (2 * half_height) / app["max_pixel_y"]
+
+    cache = create_map(app["map_width"], app["map_height"], None)
+    cache_data = cache["data"]
+    cache["dxm"] = dxm
+    cache["dym"] = dym
+
+    for offy in range(cache["height"]):
+        for offx in range(cache["width"]):
+            cache_data[cache["width"] * offy + offx] = {
+                "xp": offx,
+                "yp": offy,
+                "xm": minx + dxm * offx,
+                "ym": miny + dym * offy
+            }
+
+    app["cache"] = cache
+
 
 # Ya know, it uh, normalizes ... the brightness
 # Makes the darks darker and the brights brighter, to a tpoint
@@ -388,7 +439,7 @@ def fractal_calc(x, y, iter_limit, cr=None, ci=None):
         zr = zrsqr - zisqr + cr
 
     # Return if max iterations reached without escaping
-    return iter_limit, zr * zr + zi * zi
+    return iter_limit, zrsqr + zisqr
 
 # Converts an integer color channel to hexadecimal
 def int_to_hex(n):
@@ -479,7 +530,7 @@ def alter_color_rgb(color):
 # Returns the color used if they are all the same, otherwise False.
 # If match_color is passed something other than False, then it will
 # compare all colors against this value.
-def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient, cr, ci):
+def generate_line_opt(map, cache, max_iter, match_color, pix, iter_limit, gradient, cr, ci):
     xm_step, ym_step = 0, 0
 
     # Determine whether the line is vertical or horizontal
@@ -487,18 +538,8 @@ def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient
 
     if is_vertical:
         start, end = pix["y1"], pix["y2"]
-
-        # Precompute xm and the step size for ym to avoid repeated map_range calls
-        xm = set["x1"]
-        ym_step = (set["y2"] - set["y1"]) / (pix["y2"] - pix["y1"])
-        ym = set["y1"]
     else:
         start, end = pix["x1"], pix["x2"]
-
-        # Precompute ym and the step size for xm to avoid repeated map_range calls
-        ym = set["y1"]
-        xm_step = (set["x2"] - set["x1"]) / (pix["x2"] - pix["x1"])
-        xm = set["x1"]
 
     xp, yp = pix["x1"], pix["y1"]
 
@@ -507,13 +548,11 @@ def generate_line_opt(map, max_iter, match_color, pix, set, iter_limit, gradient
         # Update xm and ym incrementally without calling map_range
         if is_vertical:
             yp = val  # Update vertical position
-            ym += ym_step  # Increment ym by precomputed step
         else:
             xp = val  # Update horizontal position
-            xm += xm_step  # Increment xm by precomputed step
 
         # Get the pixel iteration count
-        color = generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci)
+        color = generate_pixel(map, cache, max_iter, xp, yp, iter_limit, gradient, cr, ci)
 
         # Initialize match_iter on first iteration
         if match_color == -1:
@@ -534,44 +573,47 @@ def alt(obj, field, value):
     c[field] = value
     return c
 
-# Generates a subsection of the fractal in map
-def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, cr, ci, depth = 0):
-    # Initialize the stack with the first region to process
-    stack = [(orig_pix, orig_set)]
-    detail_points = []
+def get_fractal_coords(cache, x, y):
+    record =  cache["data"][cache["width"] * y + x]
+    return record["xm"], record["ym"]
 
+# Generates a subsection of the fractal in map
+def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradient, adaptive_aa, cache, cr, ci, depth = 0):
+    # Initialize the stack with the first region to process
+    stack = [orig_pix]    
+    dxp, dyp = int(orig_pix["x2"] - orig_pix["x1"]), int(orig_pix["y2"] - orig_pix["y1"])
+    
     # We will dynamically increase the stack in the loop
     for _ in range(MAX_INT):  # Why no while loop, damn you starlark
         if len(stack) == 0:
             break
 
         # Pop the last item from the stack
-        pix, set = stack.pop()
+        pix = stack.pop()
 
         # Determine some deltas
         dxp, dyp = int(pix["x2"] - pix["x1"]), int(pix["y2"] - pix["y1"])
-        dxm, dym = float(set["x2"] - set["x1"]) / float(dxp), float(set["y2"] - set["y1"]) / float(dyp)
 
         # OPTIMIZATION: A small box can be filled in with the same color if the corners are identical
         if dxp <= 6 and dyp <= 6:
-            color1 = generate_pixel(map, max_iter, pix["x1"], pix["y1"], set["x1"], set["y1"], iter_limit, gradient, cr, ci)
-            color2 = generate_pixel(map, max_iter, pix["x2"], pix["y2"], set["x2"], set["y2"], iter_limit, gradient, cr, ci)
+            color1 = generate_pixel(map, cache, max_iter, pix["x1"], pix["y1"], iter_limit, gradient, cr, ci)
+            color2 = generate_pixel(map, cache, max_iter, pix["x2"], pix["y2"], iter_limit, gradient, cr, ci)
             if color1 == color2:
-                color3 = generate_pixel(map, max_iter, pix["x1"], pix["y2"], set["x1"], set["y2"], iter_limit, gradient, cr, ci)
+                color3 = generate_pixel(map, cache, max_iter, pix["x1"], pix["y2"], iter_limit, gradient, cr, ci)
                 if color2 == color3:
-                    color4 = generate_pixel(map, max_iter, pix["x2"], pix["y1"], set["x2"], set["y1"], iter_limit, gradient, cr, ci)
+                    color4 = generate_pixel(map, cache, max_iter, pix["x2"], pix["y1"], iter_limit, gradient, cr, ci)
                     if color3 == color4:
                         flood_fill(map, pix, color1)
                         continue
 
         # OPTIMIZATION: A border with the same iterations can be filled with the same color
-        color = generate_line_opt(map, max_iter, -1, alt(pix, "y2", pix["y1"]), alt(set, "y2", set["y1"]), iter_limit, gradient, cr, ci)
+        color = generate_line_opt(map, cache, max_iter, -1, alt(pix, "y2", pix["y1"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "y1", pix["y2"]), alt(set, "y1", set["y2"]), iter_limit, gradient, cr, ci)
+            color = generate_line_opt(map, cache, max_iter, color, alt(pix, "y1", pix["y2"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "x2", pix["x1"]), alt(set, "x2", set["x1"]), iter_limit, gradient, cr, ci)
+            color = generate_line_opt(map, cache, max_iter, color, alt(pix, "x2", pix["x1"]), iter_limit, gradient, cr, ci)
         if color != False:
-            color = generate_line_opt(map, max_iter, color, alt(pix, "x1", pix["x2"]), alt(set, "x1", set["x2"]), iter_limit, gradient, cr, ci)
+            color = generate_line_opt(map, cache, max_iter, color, alt(pix, "x1", pix["x2"]), iter_limit, gradient, cr, ci)
         if color != False:
             flood_fill(map, pix, color)
             continue
@@ -582,13 +624,11 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             splityp = int(dyp / 2)
             syp_above = splityp + pix["y1"]
             syp_below = syp_above + 1
-            sym_above = set["y1"] + splityp * dym
-            sym_below = set["y1"] + (splityp + 1) * dym
 
             # Add sub-regions to the stack
             stack.extend([
-                (alt(pix, "y1", syp_below), alt(set, "y1", sym_below)),
-                (alt(pix, "y2", syp_above), alt(set, "y2", sym_above)),
+                alt(pix, "y1", syp_below),
+                alt(pix, "y2", syp_above),
             ])
             continue
 
@@ -598,13 +638,11 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
             splitxp = int(dxp / 2)
             sxp_left = splitxp + pix["x1"]
             sxp_right = sxp_left + 1
-            sxm_left = set["x1"] + splitxp * dxm
-            sxm_right = set["x1"] + (splitxp + 1) * dxm
 
             # Add sub-regions to the stack
             stack.extend([
-                (alt(pix, "x1", sxp_right), alt(set, "x1", sxm_right)),
-                (alt(pix, "x2", sxp_left), alt(set, "x2", sxm_left)),
+                alt(pix, "x1", sxp_right),
+                alt(pix, "x2", sxp_left),
             ])
             continue
 
@@ -614,22 +652,17 @@ def generate_fractal_area(map, max_iter, orig_pix, orig_set, iter_limit, gradien
                 # Draw pixel
                 xp = pix["x1"] + offx
                 yp =  pix["y1"] + offy
-                xm = set["x1"] + (dxm * offx)
-                ym = set["y1"] + (dym * offy)
-                generate_pixel(map, max_iter, xp, yp, xm, ym, iter_limit, gradient, cr, ci)
-
-                # This will track points that could benefit from more detailing
-                detail_points.append({ "xp":xp, "yp":yp, "xm":xm, "ym":ym })
+                generate_pixel(map, cache, max_iter, xp, yp, iter_limit, gradient, cr, ci)
 
     # Add additional AA if we can
     if adaptive_aa:
-        perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, ci, dxm, dym)
+        perform_adaptive_aa(map, cache, max_iter, iter_limit, gradient, cr, ci)
 
 # Performs as many passes of spiral AA as time allows
-def perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, ci, dxm, dym):
+def perform_adaptive_aa(map, cache, max_iter, iter_limit, gradient, cr, ci):
     # Generate more AA details for targeted areas
     # Does this by spiraling around the pixel and averaging the samples
-    print("Beginning adaptive AA on", len(detail_points), "points")
+    print("Beginning adaptive AA on", len(cache["data"]), "points")
     radius = ADAPTIVE_AA_START_RADIUS
     angle = ADAPTIVE_AA_START_ANGLE
     for n in range(MAX_ADAPTIVE_PASSES):
@@ -639,12 +672,12 @@ def perform_adaptive_aa(map, detail_points, max_iter, iter_limit, gradient, cr, 
             break
 
         # Determine oversample offset
-        spiralx = radius * math.cos(math.radians(angle)) * dxm
-        spiraly = radius * math.sin(math.radians(angle)) * dym
+        spiralx = radius * math.cos(math.radians(angle)) * cache["dxm"]
+        spiraly = radius * math.sin(math.radians(angle)) * cache["dym"]
 
         # Perform additional sample pass
         print("Adding more details! PASS", "#" + str(n+1), " Elapsed:", elapsed, "Radius:", radius, "Angle:", angle)
-        for point in detail_points:
+        for point in cache["data"]:
             generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly)
 
         # Move offset around in a spiral
@@ -673,15 +706,18 @@ def generate_detail(map, point, max_iter, iter_limit, gradient, cr, ci, spiralx,
 
 # Calculates color tuple for a point on the map and returns them
 # Tries to gather the pixel data from the cache if available
-def generate_pixel(map, max_iter, xp, yp, xs, ys, iter_limit, gradient, cr, ci):
+def generate_pixel(map, cache, max_iter, xp, yp, iter_limit, gradient, cr, ci):
     data = map["data"]
     index = yp * map["width"] + xp
     stored_val = data[index]
     if stored_val != -1:
         return stored_val
 
+    # Look up fractal coordinates
+    xm, ym = get_fractal_coords(cache, xp, yp)
+
     # Normal fractal calculation
-    iter, _ = fractal_calc(xs, ys, iter_limit, cr, ci)
+    iter, _ = fractal_calc(xm, ym, iter_limit, cr, ci)
     if iter == iter_limit:
         iter = max_iter
 
@@ -720,7 +756,7 @@ def render_fractal(app, x, y):
     # Generate the map
     pix = {"x1": 0, "y1": 0, "x2": app["max_pixel_x"], "y2": app["max_pixel_y"]}
     set = {"x1": minx, "y1": miny, "x2": maxx, "y2": maxy}
-    generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive"], *app["c"])
+    generate_fractal_area(app["map"], app["max_iter"], pix, set, app["max_iter"], app["gradient"], app["adaptive"], app["cache"], *app["c"])
 
     # Downsample to the display size
     map = downsample(app["map"], DISPLAY_WIDTH)
@@ -830,10 +866,6 @@ def is_int(s):
 
 # Returns the Tidbyt schemas for setting app options
 def get_schema():
-    # link = cache.get("last_url")
-    # if link == None:
-    #     link = "N/A"
-
     gradient_options = [schema.Option(value = "random", display = "Randomized")]
     for g in PREDEFINED_GRADIENTS.keys():
         gradient_options.append(schema.Option(value = g, display = " ".join([word.capitalize() for word in g.split("-")])))
@@ -866,7 +898,7 @@ def get_schema():
             schema.Dropdown(
                 id = "gradient",
                 name = "Gradient",
-                desc = "Color gradient/gradient",
+                desc = "Color gradient",
                 default = DEFAULT_GRADIENT,
                 icon = "gradient",
                 options = gradient_options,
