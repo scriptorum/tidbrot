@@ -1,7 +1,6 @@
 # Possible additions
 # - POI Nudging
 # - Color Cycling
-# - Improved Adaptive AA passes
 #
 # Not going to do
 # - Zoom animation; poor quality, high chance of time out
@@ -52,7 +51,7 @@ DEFAULT_GRADIENT = "random"  # Color palette selection (random or named PREDEFIN
 DEFAULT_ADAPTIVE_AA = True  # Additional AA passes as time allows
 
 GRADIENT_SCALE_FACTOR = 1.55  # 1.55 = standard, less for more colors zoomed in, more for few colors zoomed in
-RANDOM_GRADIENT_STEPS = 64  # Number of colors in a randomize gradient
+RANDOM_GRADIENT_STEPS = 32  # Number of colors in a randomize gradient
 PREDEFINED_GRADIENTS_NUM_CYCLES = 4  # Number of times to repeat the colors in the gradient
 PREDEFINED_GRADIENTS = {
     "neon-rose": ((255, 0, 0), (255, 0, 255)),
@@ -543,7 +542,7 @@ def alt(obj, field, value):
 # Generates a subsection of the fractal in map
 def generate_fractal_area(map, max_iter, orig_pix, iter_limit, gradient, adaptive_aa, cr, ci):
     print("Generating fractal area")
-    
+
     # Initialize the stack with the first region to process
     stack = [orig_pix]
 
@@ -867,11 +866,15 @@ def rnd():
 
 # Returns true if this strange should successfully cast to a float
 def is_float(s):
+    if s == None:
+        return False
     float_regex = r"^[+-]?\d*\.?\d+([eE][+-]?\d+)?$"
     return bool(re.match(float_regex, s))
 
 # Returns true if this strange should successfully cast to an int
 def is_int(s):
+    if s == None:
+        return False
     int_regex = r"^[+-]?\d+$"
     return bool(re.match(int_regex, s))
 
