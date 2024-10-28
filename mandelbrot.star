@@ -542,6 +542,8 @@ def alt(obj, field, value):
 
 # Generates a subsection of the fractal in map
 def generate_fractal_area(map, max_iter, orig_pix, iter_limit, gradient, adaptive_aa, cr, ci):
+    print("Generating fractal area")
+    
     # Initialize the stack with the first region to process
     stack = [orig_pix]
 
@@ -628,10 +630,35 @@ def generate_fractal_area(map, max_iter, orig_pix, iter_limit, gradient, adaptiv
         perform_adaptive_aa(map, max_iter, iter_limit, gradient, cr, ci)
 
 # Performs as many passes of spiral AA as time allows
+# Does this by spiraling around the pixel and averaging the samples
 def perform_adaptive_aa(map, max_iter, iter_limit, gradient, cr, ci):
-    # Generate more AA details for targeted areas
-    # Does this by spiraling around the pixel and averaging the samples
     print("Beginning adaptive AA")
+
+    neighbors = [
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1),
+    ]
+
+    # Make a list of all points that are are not surrounded by the same neighbor
+    points = []
+    width = map["width"]
+    height = map["height"]
+    index = 0
+    for data in map["data"]:
+        color = data["color"]
+        point = data["point"]
+        for offset in neighbors:
+            nx, ny = point["x"] + offset[0], point["y"] + offset[1]
+            nindex = nx + ny * width
+            if nx < 0 or nx >= width or ny < 0 or ny >= height or color != map["data"][nindex]["color"]:
+                points.append(index)
+                break # Skip next neighbor
+        index += 1              
+    print ("Culled {} points, performing AA on {} points".format(width*height-len(points), len(points)))
+
+    # Perform passes now
     radius = ADAPTIVE_AA_START_RADIUS
     angle = ADAPTIVE_AA_START_ANGLE
     for n in range(MAX_ADAPTIVE_PASSES):
@@ -646,7 +673,7 @@ def perform_adaptive_aa(map, max_iter, iter_limit, gradient, cr, ci):
 
         # Perform additional sample pass
         print("Adding more details! PASS", "#" + str(n + 1), " Elapsed:", elapsed, "Radius:", radius, "Angle:", angle)
-        for record in map["data"]:
+        for record in [map["data"][index] for index in points]:
             generate_detail(record, max_iter, iter_limit, gradient, cr, ci, spiralx, spiraly)
 
         # Move offset around in a spiral
