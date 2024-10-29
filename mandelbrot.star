@@ -900,21 +900,21 @@ def get_schema():
                     schema.Option(value = "16", display = "16X AA (mandelbrots will time out)"),
                     schema.Option(value = "32", display = "32X AA (julia might time out too)"),
                 ],
-                icon = "border-none",
+                icon = "borderNone",
             ),
             schema.Toggle(
                 id = "adaptive",
                 name = "Adaptive AA",
                 desc = "Additional AA passes as time allows (Recommended)",
                 default = DEFAULT_ADAPTIVE_AA,
-                icon = "arrow-up-right-dots",
+                icon = "arrowUpRightDots",
             ),
             schema.Dropdown(
                 id = "gradient",
                 name = "Gradient",
                 desc = "Color gradient",
                 default = DEFAULT_GRADIENT,
-                icon = "gradient",
+                icon = "paintbrush",
                 options = gradient_options,
             ),
             schema.Toggle(
@@ -922,7 +922,7 @@ def get_schema():
                 name = "Julia",
                 desc = "Display a julia set (faster)",
                 default = DEFAULT_JULIA,
-                icon = "puzzle-piece",
+                icon = "puzzlePiece",
             ),
             schema.Toggle(
                 id = "brightness",
@@ -936,7 +936,7 @@ def get_schema():
                 name = "Contrast Stretch",
                 desc = "Improves contrast",
                 default = DEFAULT_CONTRAST,
-                icon = "circle-half-stroke",
+                icon = "circleHalfStroke",
             ),
             schema.Text(
                 id = "gamma",
