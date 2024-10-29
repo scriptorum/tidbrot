@@ -37,3 +37,10 @@ to on.
 If set to greater than 1.0, adjusts sets a monitor gamma point. Allegedly.
 Defaults to off.
 
+## Gallery
+![M1](screenshots/m1.gif)
+![M2](screenshots/m2.gif)
+![M3](screenshots/m3.gif)
+![M4](screenshots/m4.gif)
+![M5](screenshots/m5.gif)
+![M6](screenshots/m6.gif)
