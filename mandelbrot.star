@@ -37,8 +37,8 @@ POI_MAX_ZOOM = 10000  # Max magnification depth for POI search
 BRIGHTNESS_MIN = 16  # For brightness normalization, don't bring channel below this
 
 MAX_ADAPTIVE_PASSES = 32  # Max number of passes for adaptive AA
-ADAPTIVE_AA_START_RADIUS = 0.35  # Adaptive AA oversamples this distance away from the pixel
-ADAPTIVE_AA_INC_RADIUS = 0.015  # Adaptive AA increases the distance this amount per pass
+ADAPTIVE_AA_START_RADIUS = 0.5  # Adaptive AA oversamples this distance away from the pixel
+ADAPTIVE_AA_INC_RADIUS = 0.01  # Adaptive AA increases the distance this amount per pass
 ADAPTIVE_AA_START_ANGLE = 90  #random.number(0, 360) # Adaptive AA initial angle for oversample
 ADAPTIVE_AA_INC_ANGLE = 137.5  # Adaptive AA changes the angle by this amount every pass
 
